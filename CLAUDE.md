@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-"Claude Code on the Cloud" - A Next.js application that creates Vercel Sandbox environments and installs AI coding tools (Claude Code or Cursor CLI) for headless operation. Built with Next.js, Shadcn, and Vercel Sandbox.
+"CLI on the Cloud" - A Next.js application that creates Vercel Sandbox environments and installs AI coding tools (Claude Code or Cursor CLI) for headless operation. Built with Next.js, Shadcn, and Vercel Sandbox.
 
 ## Development Commands
 
