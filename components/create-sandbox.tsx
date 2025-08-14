@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { Square } from "lucide-react";
 import { AITool, getAllAITools, getAIToolConfig } from "@/lib/ai-tools-config";
 
 type SandboxInfo = {
   id: string | null;
   createdAt: string;
+  timeoutMs?: number;
   provider?: string;
   tool?: string;
   toolName?: string;
@@ -37,9 +39,74 @@ export function CreateSandbox() {
   const [sandbox, setSandbox] = useState<SandboxInfo | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [selectedTool, setSelectedTool] = useState<AITool>("cursor-cli");
+  const [remainingTimeMs, setRemainingTimeMs] = useState<number | null>(null);
+  const [isStoppingSandbox, setIsStoppingSandbox] = useState(false);
   
   const aiTools = getAllAITools();
   const currentToolConfig = getAIToolConfig(selectedTool);
+
+  // Format time remaining as MM:SS
+  const formatTime = useCallback((ms: number): string => {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }, []);
+
+  // Stop sandbox function
+  const stopSandbox = useCallback(async () => {
+    if (!sandbox?.id || isStoppingSandbox) return;
+    
+    setIsStoppingSandbox(true);
+    try {
+      const response = await fetch(`/api/sandbox/${sandbox.id}/stop`, {
+        method: 'POST',
+      });
+      
+      if (response.ok) {
+        setSandbox(null);
+        setRemainingTimeMs(null);
+      } else {
+        const data = await response.json();
+        setErrorMessage(data.error || 'Failed to stop sandbox');
+      }
+    } catch (error) {
+      setErrorMessage('Failed to stop sandbox');
+    } finally {
+      setIsStoppingSandbox(false);
+    }
+  }, [sandbox?.id, isStoppingSandbox]);
+
+  // Timer effect - updates remaining time every second
+  useEffect(() => {
+    if (!sandbox?.createdAt || !sandbox?.timeoutMs) {
+      setRemainingTimeMs(null);
+      return;
+    }
+
+    const createdTime = new Date(sandbox.createdAt).getTime();
+    const expiryTime = createdTime + sandbox.timeoutMs;
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const remaining = expiryTime - now;
+      
+      if (remaining <= 0) {
+        setRemainingTimeMs(null);
+        setSandbox(null); // Sandbox has expired
+      } else {
+        setRemainingTimeMs(remaining);
+      }
+    };
+
+    // Update immediately
+    updateTimer();
+    
+    // Update every second
+    const interval = setInterval(updateTimer, 1000);
+    
+    return () => clearInterval(interval);
+  }, [sandbox?.createdAt, sandbox?.timeoutMs]);
 
   // Load saved API key and tool selection on component mount
   React.useEffect(() => {
@@ -130,6 +197,7 @@ export function CreateSandbox() {
   function handleResetClick() {
     setErrorMessage(null);
     setSandbox(null);
+    setRemainingTimeMs(null);
   }
 
   return (
@@ -217,10 +285,20 @@ export function CreateSandbox() {
               <span className="text-sm text-foreground">{new Date(sandbox.createdAt).toLocaleString()}</span>
             </div>
             
-            {sandbox.template && (
+            {remainingTimeMs !== null && (
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Template:</span>
-                <span className="text-sm font-mono text-foreground">{sandbox.template}</span>
+                <span className="text-xs font-medium text-muted-foreground">Time remaining:</span>
+                <span className={`text-sm font-mono ${remainingTimeMs < 60000 ? 'text-red-600' : 'text-foreground'}`}>
+                  {formatTime(remainingTimeMs)}
+                </span>
+                <button
+                  onClick={stopSandbox}
+                  disabled={isStoppingSandbox}
+                  className="inline-flex items-center justify-center w-6 h-6 rounded border border-input bg-background hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Stop sandbox"
+                >
+                  <Square className="w-3 h-3" />
+                </button>
               </div>
             )}
           </div>

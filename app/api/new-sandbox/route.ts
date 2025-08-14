@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Sandbox } from "@vercel/sandbox";
-import ms from "ms";
 import { AITool, getAIToolConfig } from "@/lib/ai-tools-config";
+import { SANDBOX_ALIVE_TIME_MS } from "@/lib/constants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     const createdSandbox = await Sandbox.create({
       resources: { vcpus: 2 },
       runtime: "node22",
-      timeout: ms("5m"),
+      timeout: SANDBOX_ALIVE_TIME_MS,
     });
 
     const id = createdSandbox.sandboxId;
@@ -162,6 +162,7 @@ export async function POST(request: Request) {
     const info = {
       id,
       createdAt: new Date().toISOString(),
+      timeoutMs: SANDBOX_ALIVE_TIME_MS,
       cursorCLI: verificationResults,
       provider: "vercel",
       tool: tool,
