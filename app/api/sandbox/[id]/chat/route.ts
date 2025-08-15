@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Sandbox } from "@vercel/sandbox";
-import { AITool, getAIToolConfig, extractSessionIdFromResponse, getResumeCommand, getContinueCommand } from "@/lib/ai-tools-config";
+import { getAIToolConfig, extractSessionIdFromResponse, getResumeCommand, getContinueCommand } from "@/lib/ai-tools-config";
 import { createUIMessageStreamResponse, createUIMessageStream } from "ai";
 
 export const runtime = "nodejs";
@@ -55,7 +55,7 @@ export async function POST(
     let sandbox;
     try {
       sandbox = await Sandbox.get({ sandboxId });
-      console.log(`Connected to sandbox: ${sandboxId}, status: ${sandbox.sandbox.status}`);
+      console.log(`Connected to sandbox: ${sandboxId}`);
     } catch (sandboxError) {
       console.error(`Failed to connect to sandbox ${sandboxId}:`, sandboxError);
       return NextResponse.json(
@@ -143,13 +143,14 @@ export async function POST(
         const stream = createUIMessageStream({
           execute({ writer }) {
             writer.write({
-              type: 'text',
-              value: promptOutput || "No response received"
+              type: 'text-delta',
+              id: 'error-chunk',
+              delta: promptOutput || "No response received"
             });
 
             writer.write({
-              type: 'data',
-              value: {
+              type: 'data-error-metadata',
+              data: {
                 tool,
                 rawOutput: true,
                 exitCode: promptResult.exitCode
@@ -170,15 +171,16 @@ export async function POST(
       execute({ writer }) {
         // Write the main text response
         writer.write({
-          type: 'text',
-          value: responseContent
+          type: 'text-delta',
+          id: 'text-chunk',
+          delta: responseContent
         });
 
         // Write metadata as data part
         if (extractedSessionId || parsedOutput) {
           writer.write({
-            type: 'data',
-            value: {
+            type: 'data-session-metadata',
+            data: {
               sessionId: extractedSessionId,
               tool,
               duration_ms: parsedOutput?.duration_ms,

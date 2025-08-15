@@ -1,18 +1,33 @@
 "use client";
 
-import React, { useState } from "react";
-import { Square, RotateCcw, Terminal, MessageSquare } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { Square, RotateCcw, Plus, AlertCircle } from "lucide-react";
 import { SessionInfo, AITool } from "@/lib/ai-tools-config";
 import { TerminalMessage } from "./terminal-message";
+import { Button } from "./ui/button";
+import { Switch } from "./ui/switch";
+// Removed Tooltip imports to fix infinite re-render issue
+import { Loader } from "./ai-elements/loader";
+import { 
+  PromptInput, 
+  PromptInputTextarea, 
+  PromptInputToolbar, 
+  PromptInputSubmit,
+  PromptInputTools 
+} from "./ai-elements/prompt-input";
+import { Response } from "./ai-elements/response";
+import { SetupProgress, SetupTask, TaskStatus } from "./setup-progress";
 
 interface SimpleChatProps {
-  sandbox: { id: string; tool: string; toolName?: string; session?: { id: string | null } };
+  sandbox: { id: string | null; tool?: string; toolName?: string; session?: { id: string | null } };
   apiKey: string;
   onNewSandbox: () => void;
   remainingTimeMs: number | null;
   formatTime: (ms: number) => string;
   onStopSandbox: () => void;
   isStoppingSandbox: boolean;
+  isExpired?: boolean;
+  streamingMessages?: string;
 }
 
 export function SimpleChat({ 
@@ -22,11 +37,14 @@ export function SimpleChat({
   remainingTimeMs, 
   formatTime, 
   onStopSandbox,
-  isStoppingSandbox 
+  isStoppingSandbox,
+  isExpired = false,
+  streamingMessages
 }: SimpleChatProps) {
   // Save updated session to localStorage
   const saveSession = (sessionInfo: SessionInfo) => {
-    const sessionsKey = `claude-code-cloud-sessions-${sandbox.tool}`;
+    const tool = sandbox.tool || 'unknown';
+    const sessionsKey = `claude-code-cloud-sessions-${tool}`;
     const currentSessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]') as SessionInfo[];
     
     // Remove existing session with same ID if it exists
@@ -47,8 +65,17 @@ export function SimpleChat({
     id: string;
     role: "user" | "assistant";
     content: string;
-    metadata?: any;
-    type?: "chat" | "terminal";
+    metadata?: {
+      sessionId?: string;
+      duration_ms?: number;
+      total_cost_usd?: number;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+      exitCode?: number;
+    };
+    type?: "chat" | "terminal" | "setup";
     terminalResult?: {
       command: string;
       exitCode: number;
@@ -56,6 +83,7 @@ export function SimpleChat({
       stderr: string;
     };
   }>>([]);
+
   const [isTerminalMode, setIsTerminalMode] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -63,6 +91,227 @@ export function SimpleChat({
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(
     sandbox.session?.id || null
   );
+  const [setupTasks, setSetupTasks] = useState<SetupTask[]>([]);
+
+  // Initialize and update setup tasks based on sandbox state
+  React.useEffect(() => {
+    if (!sandbox.id && sandbox.toolName) {
+      // This means we're in the creation process - initialize setup tasks
+      const initialTasks: SetupTask[] = [
+        {
+          id: 'create-sandbox',
+          title: 'Create Vercel Sandbox',
+          status: 'in-progress',
+          description: 'Initializing sandbox environment...',
+        },
+        {
+          id: 'install-tool',
+          title: `Install ${sandbox.toolName}`,
+          status: 'pending',
+          description: 'Downloading and configuring...',
+        },
+        {
+          id: 'test-connection',
+          title: 'Test Connection',
+          status: 'pending',
+          description: 'Verifying installation and API connection...',
+        },
+      ];
+      
+      setSetupTasks(initialTasks);
+      setMessages([]);
+    } else if (sandbox.id && setupTasks.length > 0) {
+      // Update tasks based on current sandbox state
+      const sandboxData = sandbox as any;
+      const toolInstalled = sandboxData.cursorCLI?.cursorCLI?.installed;
+      const envConfigured = sandboxData.cursorCLI?.environment?.configured;
+      const hasError = sandboxData.cursorCLI?.cursorCLI?.error || sandboxData.cursorCLI?.environment?.error;
+      
+      setSetupTasks(prev => prev.map(task => {
+        if (task.id === 'create-sandbox') {
+          return {
+            ...task,
+            status: 'completed' as TaskStatus,
+            description: `Sandbox created successfully`,
+            details: [`Sandbox ID: ${sandbox.id}`]
+          };
+        } else if (task.id === 'install-tool') {
+          if (hasError && !toolInstalled) {
+            return {
+              ...task,
+              status: 'failed' as TaskStatus,
+              error: sandboxData.cursorCLI?.cursorCLI?.error,
+              description: 'Installation failed'
+            };
+          } else if (toolInstalled) {
+            return {
+              ...task,
+              status: 'completed' as TaskStatus,
+              description: `${sandbox.toolName} installed successfully`,
+              details: sandboxData.cursorCLI?.cursorCLI?.version ? [`Version: ${sandboxData.cursorCLI.cursorCLI.version}`] : undefined
+            };
+          } else {
+            return {
+              ...task,
+              status: 'in-progress' as TaskStatus,
+              description: 'Installing and configuring...'
+            };
+          }
+        } else if (task.id === 'test-connection') {
+          if (hasError && toolInstalled) {
+            return {
+              ...task,
+              status: 'failed' as TaskStatus,
+              error: sandboxData.cursorCLI?.environment?.error,
+              description: 'Connection test failed'
+            };
+          } else if (toolInstalled && envConfigured) {
+            const sessionId = sandbox.session?.id;
+            return {
+              ...task,
+              status: 'completed' as TaskStatus,
+              description: 'Connection verified and session established',
+              details: sessionId ? [`Session ID: ${sessionId}`] : ['Ready to use']
+            };
+          } else if (toolInstalled) {
+            return {
+              ...task,
+              status: 'in-progress' as TaskStatus,
+              description: 'Testing connection and API setup...'
+            };
+          } else {
+            return task;
+          }
+        }
+        return task;
+      }));
+      
+      // If setup is complete and we have an initial prompt response, add it to messages
+      const isSetupComplete = toolInstalled && envConfigured && !hasError;
+      if (isSetupComplete && messages.length === 0) {
+        const promptOutput = sandboxData.cursorCLI?.cursorCLI?.promptOutput;
+        if (promptOutput?.parsedJson?.result) {
+          const initialResponse = {
+            id: 'initial-response',
+            role: "assistant" as const,
+            content: String(promptOutput.parsedJson.result),
+            metadata: {
+              sessionId: promptOutput.sessionId,
+              duration_ms: promptOutput.parsedJson.duration_ms,
+              total_cost_usd: promptOutput.parsedJson.total_cost_usd,
+              usage: promptOutput.parsedJson.usage
+            }
+          };
+          
+          setMessages([initialResponse]);
+        }
+      }
+    } else if (sandbox.id && setupTasks.length === 0) {
+      // Sandbox already exists and no setup tasks - this is a resumed session or direct navigation
+      setSetupTasks([]);
+    }
+  }, [sandbox.id, sandbox.toolName, sandbox.session?.id, JSON.stringify((sandbox as any).cursorCLI)]);
+
+  // Parse streaming messages to update task status in real-time
+  React.useEffect(() => {
+    if (!streamingMessages || setupTasks.length === 0) return;
+
+    setSetupTasks(prev => prev.map(task => {
+      if (task.id === 'create-sandbox') {
+        if (streamingMessages.includes('✅ **Sandbox created successfully**')) {
+          const sandboxIdMatch = streamingMessages.match(/ID: `([^`]+)`/);
+          const sandboxId = sandboxIdMatch ? sandboxIdMatch[1] : '';
+          return {
+            ...task,
+            status: 'completed' as TaskStatus,
+            description: 'Sandbox created successfully',
+            details: sandboxId ? [`Sandbox ID: ${sandboxId}`] : undefined
+          };
+        } else if (streamingMessages.includes('Creating Vercel Sandbox')) {
+          return {
+            ...task,
+            status: 'in-progress' as TaskStatus,
+            description: 'Creating sandbox environment...'
+          };
+        }
+      } else if (task.id === 'install-tool') {
+        if (streamingMessages.includes(`✅ **${sandbox.toolName} installed successfully**`)) {
+          return {
+            ...task,
+            status: 'completed' as TaskStatus,
+            description: `${sandbox.toolName} installed successfully`
+          };
+        } else if (streamingMessages.includes(`⚠️ **Installation completed with warnings**`)) {
+          return {
+            ...task,
+            status: 'completed' as TaskStatus,
+            description: 'Installation completed with warnings'
+          };
+        } else if (streamingMessages.includes(`Installing ${sandbox.toolName}`) || 
+                   streamingMessages.includes(`📦 Installing ${sandbox.toolName}`)) {
+          return {
+            ...task,
+            status: 'in-progress' as TaskStatus,
+            description: `Installing ${sandbox.toolName}...`
+          };
+        } else if (streamingMessages.includes('❌') && streamingMessages.includes('setup')) {
+          return {
+            ...task,
+            status: 'failed' as TaskStatus,
+            error: 'Installation failed',
+            description: 'Installation failed'
+          };
+        }
+      } else if (task.id === 'test-connection') {
+        if (streamingMessages.includes(`✅ **${sandbox.toolName} is working perfectly!**`)) {
+          const sessionMatch = streamingMessages.match(/🔗 Session ID: `([^`]+)`/);
+          const sessionId = sessionMatch ? sessionMatch[1] : '';
+          return {
+            ...task,
+            status: 'completed' as TaskStatus,
+            description: 'Connection verified and session established',
+            details: sessionId ? [`Session ID: ${sessionId}`] : ['Ready to use']
+          };
+        } else if (streamingMessages.includes(`❌ **${sandbox.toolName} test failed**`)) {
+          return {
+            ...task,
+            status: 'failed' as TaskStatus,
+            error: 'Connection test failed',
+            description: 'Connection test failed'
+          };
+        } else if (streamingMessages.includes(`Testing ${sandbox.toolName} Connection`) || 
+                   streamingMessages.includes(`🧪 Testing ${sandbox.toolName} Connection`)) {
+          return {
+            ...task,
+            status: 'in-progress' as TaskStatus,
+            description: 'Testing connection and API setup...'
+          };
+        }
+      }
+      return task;
+    }));
+  }, [streamingMessages, setupTasks.length, sandbox.toolName]);
+
+  // Memoize props to prevent infinite re-renders in PromptInputSubmit
+  const submitStatus = useMemo(() => {
+    return isLoading ? "streaming" : "ready";
+  }, [isLoading]);
+
+  const isSubmitDisabled = useMemo(() => {
+    return isLoading || !input.trim() || isExpired;
+  }, [isLoading, input, isExpired]);
+
+  const submitButtonText = useMemo(() => {
+    if (isLoading) {
+      return isTerminalMode ? 'Running...' : 'Sending...';
+    }
+    return isTerminalMode ? 'Run' : 'Send';
+  }, [isLoading, isTerminalMode]);
+
+  // Memoize Switch props to prevent re-renders
+  const isSwitchDisabled = useMemo(() => {
+    return isLoading || isExpired;
+  }, [isLoading, isExpired]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,6 +324,30 @@ export function SimpleChat({
 
     if (isTerminalMode) {
       // Terminal mode - execute command directly
+      if (!sandbox.id) {
+        setError("Sandbox ID is missing");
+        setInput(currentInput);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Add the command echo and loading state immediately
+      const loadingMessageId = `terminal_loading_${Date.now()}`;
+      const loadingMessage = {
+        id: loadingMessageId,
+        role: "assistant" as const,
+        content: "", // Not used for terminal messages
+        type: "terminal" as const,
+        terminalResult: {
+          command: currentInput,
+          exitCode: -1, // Special code to indicate loading
+          stdout: "",
+          stderr: "",
+        },
+      };
+
+      setMessages(prev => [...prev, loadingMessage]);
+      
       try {
         const response = await fetch(`/api/sandbox/${sandbox.id}/terminal`, {
           method: "POST",
@@ -93,17 +366,34 @@ export function SimpleChat({
 
         const data = await response.json();
         
-        const terminalMessage = {
-          id: `terminal_${Date.now()}`,
-          role: "assistant" as const,
-          content: "", // Not used for terminal messages
-          type: "terminal" as const,
-          terminalResult: data.result,
-        };
-
-        setMessages(prev => [...prev, terminalMessage]);
+        // Replace the loading message with the actual result
+        setMessages(prev => prev.map(msg => 
+          msg.id === loadingMessageId 
+            ? {
+                ...msg,
+                terminalResult: {
+                  command: currentInput,
+                  ...data.result
+                }
+              }
+            : msg
+        ));
       } catch (error) {
         console.error("Terminal error:", error);
+        // Replace loading message with error result
+        setMessages(prev => prev.map(msg => 
+          msg.id === loadingMessageId 
+            ? {
+                ...msg,
+                terminalResult: {
+                  command: currentInput,
+                  exitCode: 1,
+                  stdout: "",
+                  stderr: error instanceof Error ? error.message : "Failed to execute command"
+                }
+              }
+            : msg
+        ));
         setError(error instanceof Error ? error.message : "Failed to execute command");
         setInput(currentInput);
       }
@@ -118,14 +408,21 @@ export function SimpleChat({
 
       setMessages(prev => [...prev, userMessage]);
 
+      if (!sandbox.id) {
+        setError("Sandbox ID is missing");
+        setInput(currentInput);
+        setIsLoading(false);
+        return;
+      }
+      
       try {
-      const response = await fetch(`/api/sandbox/${sandbox.id}/chat`, {
+        const response = await fetch(`/api/sandbox/${sandbox.id}/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          tool: sandbox.tool,
+          tool: sandbox.tool || 'unknown',
           apiKey: apiKey,
           sessionId: currentSessionId,
           messages: [userMessage],
@@ -159,21 +456,21 @@ export function SimpleChat({
               try {
                 const parsed = JSON.parse(data);
                 
-                if (parsed.type === 'text') {
-                  assistantContent += parsed.value;
-                } else if (parsed.type === 'data') {
-                  assistantMetadata = parsed.value;
+                if (parsed.type === 'text-delta') {
+                  assistantContent += parsed.delta;
+                } else if (parsed.type === 'data-session-metadata' || parsed.type === 'data-error-metadata') {
+                  assistantMetadata = parsed.data;
                   
                   // Update session ID if provided
-                  if (parsed.value.sessionId) {
-                    setCurrentSessionId(parsed.value.sessionId);
+                  if (parsed.data.sessionId) {
+                    setCurrentSessionId(parsed.data.sessionId);
                     
                     // Save updated session info to localStorage
                     const sessionInfo: SessionInfo = {
-                      sessionId: parsed.value.sessionId,
-                      toolType: sandbox.tool as AITool,
-                      sandboxId: sandbox.id,
-                      createdAt: sandbox.session?.id === parsed.value.sessionId ? 
+                      sessionId: parsed.data.sessionId,
+                      toolType: (sandbox.tool || 'unknown') as AITool,
+                      sandboxId: sandbox.id!,
+                      createdAt: sandbox.session?.id === parsed.data.sessionId ? 
                         new Date().toISOString() : // This is a new session
                         new Date().toISOString(), // For now, use current time - could be improved
                       lastUsedAt: new Date().toISOString()
@@ -217,7 +514,7 @@ export function SimpleChat({
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-semibold">{sandbox.toolName || 'AI Tool'} Chat</h2>
               <span className="text-xs text-muted-foreground">
-                Sandbox: {sandbox.id.slice(0, 8)}...
+                Sandbox: {sandbox.id ? sandbox.id.slice(0, 8) + '...' : 'N/A'}
               </span>
             </div>
             
@@ -233,63 +530,79 @@ export function SimpleChat({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Terminal Mode Toggle */}
-            <button
-              onClick={() => setIsTerminalMode(!isTerminalMode)}
-              className={`inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs transition-colors ${
-                isTerminalMode 
-                  ? 'bg-green-600 text-white hover:bg-green-700'
-                  : 'bg-secondary hover:bg-secondary/80'
-              }`}
-            >
-              {isTerminalMode ? (
-                <>
-                  <Terminal className="w-3 h-3" />
-                  Terminal Mode
-                </>
-              ) : (
-                <>
-                  <MessageSquare className="w-3 h-3" />
-                  Chat Mode
-                </>
-              )}
-            </button>
+          <div className="flex items-center gap-3">
             
-            <button
-              onClick={() => {
-                setMessages([]);
-                setCurrentSessionId(null);
-                setError(null);
-              }}
-              className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs bg-secondary hover:bg-secondary/80"
-            >
-              <RotateCcw className="w-3 h-3" />
-              New Chat
-            </button>
+            <div className="h-4 w-px bg-border" />
             
-            <button
-              onClick={onStopSandbox}
-              disabled={isStoppingSandbox}
-              className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50"
-            >
-              <Square className="w-3 h-3" />
-              {isStoppingSandbox ? 'Stopping...' : 'Stop'}
-            </button>
-            
-            <button
-              onClick={onNewSandbox}
-              className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              New Sandbox
-            </button>
+            {/* Action Buttons */}
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost" 
+                size="icon"
+                onClick={() => {
+                  setMessages([]);
+                  setCurrentSessionId(null);
+                  setError(null);
+                }}
+                disabled={isExpired}
+                title="New Chat"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </Button>
+              
+              <Button
+                variant="ghost" 
+                size="icon"
+                onClick={onStopSandbox}
+                disabled={isStoppingSandbox || isExpired}
+                title={isStoppingSandbox ? 'Stopping...' : 'Stop Sandbox'}
+              >
+                <Square className="w-4 h-4" />
+              </Button>
+              
+              <Button
+                variant="ghost" 
+                size="icon"
+                onClick={onNewSandbox}
+                title="New Sandbox"
+              >
+                <Plus className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </div>
       </div>
 
+      {/* Expired State Banner */}
+      {isExpired && (
+        <div className="border-b bg-destructive/10 border-destructive/20 px-4 py-3">
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertCircle className="w-4 h-4" />
+            <span className="text-sm font-medium">Sandbox has expired</span>
+            <div className="flex-1" />
+            <Button 
+              variant="destructive" 
+              size="sm" 
+              onClick={onNewSandbox}
+              className="h-7"
+            >
+              <Plus className="w-3 h-3 mr-1" />
+              Create New Sandbox
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Chat messages */}
       <div className="flex-1 overflow-y-auto p-4">
-        {messages.length === 0 && (
+        {/* Show setup progress if we have setup tasks */}
+        {setupTasks.length > 0 && (
+          <div className="mb-6">
+            <SetupProgress tasks={setupTasks} toolName={sandbox.toolName || 'AI Tool'} />
+          </div>
+        )}
+        
+        {messages.length === 0 && setupTasks.length === 0 && (
           <div className="flex h-full items-center justify-center text-center">
             <div className="space-y-2">
               <h3 className="text-lg font-medium">
@@ -318,30 +631,37 @@ export function SimpleChat({
 
           return (
             <div key={message.id} className={`mb-4 flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                message.role === 'user' 
-                  ? 'bg-primary text-primary-foreground' 
-                  : 'bg-secondary text-foreground'
-              }`}>
-                <div className="whitespace-pre-wrap">{message.content}</div>
-                
-                {message.role === 'assistant' && message.metadata && (
-                  <div className="mt-2 pt-2 border-t border-muted text-xs opacity-70 space-y-1">
-                    {message.metadata.duration_ms && (
-                      <div>Response time: {message.metadata.duration_ms}ms</div>
-                    )}
-                    {message.metadata.total_cost_usd && (
-                      <div>Cost: ${message.metadata.total_cost_usd}</div>
-                    )}
-                    {message.metadata.usage && (
-                      <div>Tokens: {message.metadata.usage.input_tokens || 0} in, {message.metadata.usage.output_tokens || 0} out</div>
-                    )}
-                    {message.metadata.sessionId && (
-                      <div>Session: {message.metadata.sessionId.slice(0, 8)}...</div>
-                    )}
-                  </div>
-                )}
-              </div>
+              {message.role === 'user' ? (
+                <div className="max-w-[80%] rounded-lg px-4 py-2 bg-primary text-primary-foreground">
+                  <div className="whitespace-pre-wrap">{message.content}</div>
+                </div>
+              ) : (
+                <div className="max-w-[80%]">
+                  <Response 
+                    className="rounded-lg bg-secondary text-foreground p-4"
+                    parseIncompleteMarkdown={true}
+                  >
+                    {message.content}
+                  </Response>
+                  
+                  {message.metadata && (
+                    <div className="mt-2 pt-2 border-t border-muted text-xs opacity-70 space-y-1 px-4">
+                      {message.metadata.duration_ms && (
+                        <div>Response time: {message.metadata.duration_ms}ms</div>
+                      )}
+                      {message.metadata.total_cost_usd && (
+                        <div>Cost: ${message.metadata.total_cost_usd}</div>
+                      )}
+                      {message.metadata.usage && (
+                        <div>Tokens: {message.metadata.usage.input_tokens || 0} in, {message.metadata.usage.output_tokens || 0} out</div>
+                      )}
+                      {message.metadata.sessionId && (
+                        <div>Session: {message.metadata.sessionId.slice(0, 8)}...</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -355,25 +675,44 @@ export function SimpleChat({
 
       {/* Input area */}
       <div className="border-t bg-background p-4">
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <input
-            type="text"
+        <PromptInput onSubmit={handleSubmit} className="relative">
+          <PromptInputTextarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={isTerminalMode ? "Enter command (e.g., ls, pwd, cat file.txt)..." : `Message ${sandbox.toolName || 'AI tool'}...`}
-            disabled={isLoading}
-            className={`flex-1 px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent ${
-              isTerminalMode ? 'font-mono' : ''
-            }`}
+            placeholder={
+              isExpired 
+                ? "Sandbox expired - create a new sandbox to continue"
+                : isTerminalMode 
+                  ? "Enter command (e.g., ls, pwd, cat file.txt)..." 
+                  : `Message ${sandbox.toolName || 'AI tool'}...`
+            }
+            disabled={isLoading || isExpired}
+            className={`resize-none ${isTerminalMode ? 'font-mono' : ''} ${isExpired ? 'bg-muted text-muted-foreground cursor-not-allowed' : ''}`}
           />
-          <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? (isTerminalMode ? 'Running...' : 'Sending...') : (isTerminalMode ? 'Run' : 'Send')}
-          </button>
-        </form>
+          <PromptInputToolbar>
+            <PromptInputTools>
+              {/* Mode Switch */}
+              <div className="flex items-center gap-2 px-2">
+                <Switch
+                  checked={isTerminalMode}
+                  onCheckedChange={setIsTerminalMode}
+                  disabled={isSwitchDisabled}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {isTerminalMode ? "Terminal" : "Chat"}
+                </span>
+              </div>
+            </PromptInputTools>
+            <PromptInputSubmit
+              className="relative"
+              disabled={isSubmitDisabled}
+              status={submitStatus}
+            >
+              {isLoading && <Loader size={12} className="mr-1" />}
+              {submitButtonText}
+            </PromptInputSubmit>
+          </PromptInputToolbar>
+        </PromptInput>
       </div>
     </div>
   );

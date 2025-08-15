@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Square } from "lucide-react";
 import { AITool, getAllAITools, getAIToolConfig, SessionInfo } from "@/lib/ai-tools-config";
+import { Loader } from "./ai-elements/loader";
 
 type SandboxInfo = {
   id: string | null;
@@ -25,7 +26,7 @@ type SandboxInfo = {
         stdout: string; 
         stderr: string; 
         exitCode: number;
-        parsedJson?: any;
+        parsedJson?: Record<string, unknown>;
         sessionId?: string;
       } | null;
     };
@@ -33,21 +34,20 @@ type SandboxInfo = {
   };
 };
 
-type NewSandboxResponse = {
-  success: boolean;
-  sandbox?: SandboxInfo;
-  error?: string;
-};
 
 interface CreateSandboxProps {
   onSandboxCreated?: (sandbox: SandboxInfo, apiKey: string) => void;
+  onSandboxCreateStart?: (apiKey: string, tool: AITool) => void;
+  onStreamingMessages?: (messages: string) => void;
 }
 
-export function CreateSandbox({ onSandboxCreated }: CreateSandboxProps) {
+export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStreamingMessages }: CreateSandboxProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sandbox, setSandbox] = useState<SandboxInfo | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [streamingMessages, setStreamingMessages] = useState<string>("");
+  const [showStreamingOutput, setShowStreamingOutput] = useState(false);
   const [selectedTool, setSelectedTool] = useState<AITool>("cursor-cli");
   const [remainingTimeMs, setRemainingTimeMs] = useState<number | null>(null);
   const [isStoppingSandbox, setIsStoppingSandbox] = useState(false);
@@ -84,7 +84,7 @@ export function CreateSandbox({ onSandboxCreated }: CreateSandboxProps) {
         const data = await response.json();
         setErrorMessage(data.error || 'Failed to stop sandbox');
       }
-    } catch (error) {
+    } catch {
       setErrorMessage('Failed to stop sandbox');
     } finally {
       setIsStoppingSandbox(false);
@@ -280,6 +280,14 @@ export function CreateSandbox({ onSandboxCreated }: CreateSandboxProps) {
     setIsLoading(true);
     setErrorMessage(null);
     setSandbox(null);
+    setStreamingMessages("");
+    setShowStreamingOutput(true);
+    onStreamingMessages?.("");
+
+    // Notify parent that sandbox creation has started
+    if (onSandboxCreateStart) {
+      onSandboxCreateStart(apiKey.trim(), selectedTool);
+    }
 
     try {
       const response = await fetch("/api/new-sandbox", { 
@@ -295,36 +303,78 @@ export function CreateSandbox({ onSandboxCreated }: CreateSandboxProps) {
           sessionId: selectedSessionId || undefined
         })
       });
-      const data: NewSandboxResponse = await response.json();
 
-      if (!response.ok || !data.success) {
-        const message = data.error ?? `Request failed with status ${response.status}`;
-        throw new Error(message);
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
       }
 
-      setSandbox(data.sandbox ?? null);
-      
-      // Save session if one was returned
-      if (data.sandbox?.session?.id && data.sandbox?.id) {
-        const sessionInfo: SessionInfo = {
-          sessionId: data.sandbox.session.id,
-          toolType: selectedTool,
-          sandboxId: data.sandbox.id,
-          createdAt: data.sandbox.session.resumed ? 
-            savedSessions.find(s => s.sessionId === data.sandbox?.session?.id)?.createdAt || new Date().toISOString() :
-            new Date().toISOString(),
-          lastUsedAt: new Date().toISOString()
-        };
-        saveSession(sessionInfo);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response reader available");
       }
 
-      // Notify parent component about successful creation
-      if (onSandboxCreated && data.sandbox) {
-        onSandboxCreated(data.sandbox, apiKey.trim());
+      const decoder = new TextDecoder();
+      let accumulatedMessages = "";
+      let sandboxData: SandboxInfo | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'text-delta') {
+                accumulatedMessages += data.delta;
+                setStreamingMessages(accumulatedMessages);
+                onStreamingMessages?.(accumulatedMessages);
+              } else if (data.type === 'data' && data.id === 'sandbox-info') {
+                if (data.data.success && data.data.sandbox) {
+                  sandboxData = data.data.sandbox;
+                } else if (!data.data.success) {
+                  throw new Error(data.data.error || "Sandbox creation failed");
+                }
+              }
+            } catch (parseError) {
+              // Ignore parsing errors for streaming chunks
+              console.warn("Failed to parse streaming chunk:", parseError);
+            }
+          }
+        }
+      }
+
+      if (sandboxData) {
+        setSandbox(sandboxData);
+        
+        // Save session if one was returned
+        if (sandboxData.session?.id && sandboxData.id) {
+          const sessionInfo: SessionInfo = {
+            sessionId: sandboxData.session.id,
+            toolType: selectedTool,
+            sandboxId: sandboxData.id,
+            createdAt: sandboxData.session.resumed ? 
+              savedSessions.find(s => s.sessionId === sandboxData?.session?.id)?.createdAt || new Date().toISOString() :
+              new Date().toISOString(),
+            lastUsedAt: new Date().toISOString()
+          };
+          saveSession(sessionInfo);
+        }
+
+        // Notify parent component about successful creation
+        if (onSandboxCreated) {
+          onSandboxCreated(sandboxData, apiKey.trim());
+        }
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Something went wrong";
       setErrorMessage(message);
+      setShowStreamingOutput(false);
     } finally {
       setIsLoading(false);
     }
@@ -468,6 +518,18 @@ export function CreateSandbox({ onSandboxCreated }: CreateSandboxProps) {
         </div>
       )}
 
+      {showStreamingOutput && streamingMessages && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-4">
+          <div className="text-sm font-medium text-blue-900 mb-2 flex items-center gap-2">
+            <Loader size={12} className="text-blue-600" />
+            Setting up your sandbox...
+          </div>
+          <div className="text-sm text-blue-800 whitespace-pre-wrap font-mono bg-white p-3 rounded border overflow-auto max-h-64">
+            {streamingMessages}
+          </div>
+        </div>
+      )}
+
       {sandbox && (
         <div className="rounded-md border border-muted bg-muted/20 p-3 space-y-3">
           <div className="text-sm font-medium text-foreground">Sandbox created</div>
@@ -605,21 +667,21 @@ export function CreateSandbox({ onSandboxCreated }: CreateSandboxProps) {
                     {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson && (
                       <div className="p-3 bg-green-50 border border-green-200 rounded">
                         <div className="text-xs font-medium text-green-700 mb-2">AI Response</div>
-                        {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.result && (
+                        {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.result ? (
                           <div className="text-sm text-green-800">
-                            {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.result}
+                            {String(sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.result)}
                           </div>
-                        )}
-                        {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.duration_ms && (
+                        ) : null}
+                        {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.duration_ms ? (
                           <div className="text-xs text-green-600 mt-1">
-                            Response time: {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.duration_ms}ms
+                            Response time: {String(sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.duration_ms)}ms
                           </div>
-                        )}
-                        {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.total_cost_usd && (
+                        ) : null}
+                        {sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.total_cost_usd ? (
                           <div className="text-xs text-green-600">
-                            Cost: ${sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.total_cost_usd}
+                            Cost: ${String(sandbox.cursorCLI.cursorCLI.promptOutput.parsedJson.total_cost_usd)}
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     )}
                     

@@ -14,14 +14,14 @@ export interface Message {
   content?: string;
   session_id?: string;
   timestamp?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SessionConfig {
   resumeCommand: (sessionId: string) => string[];
   continueCommand: string[];
   listCommand?: string[];
-  extractSessionId: (response: any) => string | null;
+  extractSessionId: (response: unknown) => string | null;
 }
 
 export interface AIToolConfig {
@@ -72,7 +72,7 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
     },
     verification: {
       helpCommand: {
-        args: ['--help', '--dangerously-skip-permissions']
+        args: ['--help']
       },
       promptCommand: {
         args: ['-p', 'hello', '--output-format', 'json', '--dangerously-skip-permissions']
@@ -81,7 +81,7 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
     sessionConfig: {
       resumeCommand: (sessionId: string) => ['--resume', sessionId, '--output-format', 'json', '--dangerously-skip-permissions'],
       continueCommand: ['--continue', '--output-format', 'json', '--dangerously-skip-permissions'],
-      extractSessionId: (response: any) => {
+      extractSessionId: (response: unknown) => {
         if (typeof response === 'string') {
           try {
             response = JSON.parse(response);
@@ -91,12 +91,12 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
         }
         if (Array.isArray(response)) {
           for (const message of response) {
-            if (message.session_id) {
-              return message.session_id;
+            if (message && typeof message === 'object' && 'session_id' in message) {
+              return String(message.session_id);
             }
           }
-        } else if (response?.session_id) {
-          return response.session_id;
+        } else if (response && typeof response === 'object' && 'session_id' in response) {
+          return String((response as { session_id: unknown }).session_id);
         }
         return null;
       }
@@ -134,7 +134,7 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
       resumeCommand: (sessionId: string) => ['-a', 'CURSOR_API_KEY_PLACEHOLDER', '--resume', sessionId, '--output-format', 'json'],
       continueCommand: ['-a', 'CURSOR_API_KEY_PLACEHOLDER', 'resume', '--output-format', 'json'],
       listCommand: ['ls'],
-      extractSessionId: (response: any) => {
+      extractSessionId: (response: unknown) => {
         if (typeof response === 'string') {
           try {
             response = JSON.parse(response);
@@ -142,13 +142,15 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
             return null;
           }
         }
-        if (response?.chat_id || response?.id) {
-          return response.chat_id || response.id;
+        if (response && typeof response === 'object' && ('chat_id' in response || 'id' in response)) {
+          const obj = response as { chat_id?: unknown; id?: unknown };
+          return String(obj.chat_id || obj.id);
         }
         if (Array.isArray(response)) {
           for (const message of response) {
-            if (message.chat_id || message.id) {
-              return message.chat_id || message.id;
+            if (message && typeof message === 'object' && ('chat_id' in message || 'id' in message)) {
+              const obj = message as { chat_id?: unknown; id?: unknown };
+              return String(obj.chat_id || obj.id);
             }
           }
         }
@@ -169,7 +171,7 @@ export function getAllAITools(): { value: AITool; label: string }[] {
   }));
 }
 
-export function extractSessionIdFromResponse(tool: AITool, response: any): string | null {
+export function extractSessionIdFromResponse(tool: AITool, response: unknown): string | null {
   const config = getAIToolConfig(tool);
   return config.sessionConfig.extractSessionId(response);
 }

@@ -12,7 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Development server (no sync)**: `pnpm dev:no-sync` (skips token sync)
 - **Build**: `pnpm build`
 - **Production server**: `pnpm start`
-- **Linting**: `pnpm lint`
+- **Linting**: `pnpm lint` (ESLint + TypeScript checking)
+- **Type checking**: `npx tsc --noEmit` (TypeScript compiler type checking)
 - **Sync Vercel environment**: `pnpm sync-env`
 
 This project uses pnpm as the package manager.
@@ -66,3 +67,14 @@ This project uses pnpm as the package manager.
 - TypeScript with strict mode and path mapping (`@/*`)
 - Component-first architecture with React hooks
 - JSON-first AI tool integration with structured response parsing
+
+## Code Quality Rules
+
+**IMPORTANT**: Always run the linter after writing or modifying code:
+
+1. **After making any code changes**, run: `pnpm lint`
+2. **For TypeScript-only checking**, run: `npx tsc --noEmit` 
+3. **Fix all linting errors** before considering the task complete
+4. **Never commit code** with linting or TypeScript errors
+
+This ensures code quality, consistency, and prevents runtime errors.

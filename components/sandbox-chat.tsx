@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
-import { useChat } from "@ai-sdk/react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Square, RotateCcw } from "lucide-react";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageAvatar } from "@/components/ai-elements/message";
@@ -10,7 +9,6 @@ import {
   PromptInputTextarea,
   PromptInputToolbar,
   PromptInputTools,
-  PromptInputButton,
   PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
 import { AITool } from "@/lib/ai-tools-config";
@@ -36,7 +34,7 @@ type SandboxInfo = {
         stdout: string; 
         stderr: string; 
         exitCode: number;
-        parsedJson?: any;
+        parsedJson?: Record<string, unknown>;
         sessionId?: string;
       } | null;
     };
@@ -66,50 +64,137 @@ export function SandboxChat({
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(
     sandbox.session?.id || null
   );
+  const [messages, setMessages] = useState<Array<{id: string, role: 'user' | 'assistant', content: string}>>([]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Removed debug logging to prevent console spam
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+    };
+  }, []);
 
-  const onFinish = useCallback((message) => {
-    console.log("Chat onFinish:", message);
-    // Extract session ID from data parts
-    if (message.data) {
-      for (const data of message.data) {
-        if (data.sessionId) {
-          setCurrentSessionId(data.sessionId);
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+  }, []);
+
+  const handleSubmit = useCallback(async (e?: { preventDefault?: () => void }) => {
+    e?.preventDefault?.();
+    
+    if (!input.trim() || isLoading) return;
+    
+    const userMessage = {
+      id: Date.now().toString(),
+      role: 'user' as const,
+      content: input.trim()
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
+    setInput("");
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(`/api/sandbox/${sandbox.id}/terminal`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tool: sandbox.tool,
+          apiKey: apiKey,
+          sessionId: currentSessionId,
+          prompt: input.trim()
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
+      }
+      
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response reader available");
+      }
+      
+      const decoder = new TextDecoder();
+      let assistantContent = "";
+      
+      const assistantMessageId = (Date.now() + 1).toString();
+      const assistantMessage = {
+        id: assistantMessageId,
+        role: 'assistant' as const,
+        content: ""
+      };
+      
+      setMessages(prev => [...prev, assistantMessage]);
+      
+      // Use a timeout to batch updates and prevent infinite re-renders
+      const updateAssistantMessage = (content: string) => {
+        if (updateTimeoutRef.current) {
+          clearTimeout(updateTimeoutRef.current);
+        }
+        
+        updateTimeoutRef.current = setTimeout(() => {
+          setMessages(prev => prev.map(msg => 
+            msg.id === assistantMessageId 
+              ? { ...msg, content }
+              : msg
+          ));
+        }, 50); // Update every 50ms to balance responsiveness and performance
+      };
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          // Final update - clear timeout and update immediately
+          if (updateTimeoutRef.current) {
+            clearTimeout(updateTimeoutRef.current);
+          }
+          setMessages(prev => prev.map(msg => 
+            msg.id === assistantMessageId 
+              ? { ...msg, content: assistantContent }
+              : msg
+          ));
           break;
         }
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'text-delta') {
+                assistantContent += data.delta;
+                updateAssistantMessage(assistantContent);
+              } else if (data.type === 'data' && data.data?.sessionId) {
+                setCurrentSessionId(data.data.sessionId);
+              }
+            } catch {
+              // Ignore parsing errors
+            }
+          }
+        }
       }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Something went wrong';
+      setError(new Error(errorMessage));
+    } finally {
+      // Clean up timeout
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+        updateTimeoutRef.current = null;
+      }
+      setIsLoading(false);
     }
-  }, []);
-
-  const onError = useCallback((error) => {
-    console.error("Chat onError:", error);
-    // Prevent navigation back to create mode on chat errors
-    // The error will be displayed in the UI automatically
-    // We should NOT call onNewSandbox or any navigation here
-  }, []);
-
-  const chatBody = React.useMemo(() => ({
-    tool: sandbox.tool,
-    apiKey: apiKey,
-    sessionId: currentSessionId,
-  }), [sandbox.tool, apiKey, currentSessionId]);
-
-  let chatHookResult;
-  try {
-    chatHookResult = useChat({
-      api: `/api/test-chat`, // Temporarily use test endpoint
-      body: chatBody,
-      onFinish,
-      onError,
-    });
-    // useChat initialized successfully
-  } catch (error) {
-    console.error("useChat initialization error:", error);
-    throw error;
-  }
-
-  const { messages, input, handleInputChange, handleSubmit, isLoading, error, status } = chatHookResult;
+  }, [input, isLoading, sandbox.id, sandbox.tool, apiKey, currentSessionId]);
 
   const handleStartNewConversation = useCallback(() => {
     setCurrentSessionId(null);
@@ -207,38 +292,15 @@ export function SandboxChat({
               />
               <MessageContent>
                 <div className="whitespace-pre-wrap">
-                  {message.parts.map((part, index) => {
-                    if (part.type === 'text') {
-                      return <span key={index}>{part.text}</span>;
-                    }
-                    return null;
-                  })}
+                  {message.content}
                 </div>
-                
-                {message.role === 'assistant' && message.data && (
-                  <div className="mt-2 pt-2 border-t border-muted text-xs text-muted-foreground space-y-1">
-                    {message.data.map((data, index) => (
-                      <div key={index}>
-                        {data.duration_ms && (
-                          <div>Response time: {data.duration_ms}ms</div>
-                        )}
-                        {data.total_cost_usd && (
-                          <div>Cost: ${data.total_cost_usd}</div>
-                        )}
-                        {data.usage && (
-                          <div>Tokens: {data.usage.input_tokens || 0} in, {data.usage.output_tokens || 0} out</div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </MessageContent>
             </Message>
           ))}
           
           {error && (
             <div className="mx-4 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-destructive text-sm">
-              Error: {error.message || error}
+              Error: {error.message}
             </div>
           )}
         </ConversationContent>
@@ -259,8 +321,8 @@ export function SandboxChat({
             <PromptInputTools>
               {/* Could add tools here like file upload, etc. */}
             </PromptInputTools>
-            <PromptInputSubmit status={status}>
-              Send
+            <PromptInputSubmit disabled={isLoading}>
+              {isLoading ? 'Sending...' : 'Send'}
             </PromptInputSubmit>
           </PromptInputToolbar>
         </PromptInput>

@@ -27,7 +27,7 @@ type SandboxInfo = {
         stdout: string; 
         stderr: string; 
         exitCode: number;
-        parsedJson?: any;
+        parsedJson?: Record<string, unknown>;
         sessionId?: string;
       } | null;
     };
@@ -43,6 +43,8 @@ export function AppContainer() {
   const [apiKey, setApiKey] = useState<string>("");
   const [remainingTimeMs, setRemainingTimeMs] = useState<number | null>(null);
   const [isStoppingSandbox, setIsStoppingSandbox] = useState(false);
+  const [isExpired, setIsExpired] = useState(false);
+  const [streamingMessages, setStreamingMessages] = useState<string>("");
 
   // Debug logging for state changes
   React.useEffect(() => {
@@ -76,12 +78,13 @@ export function AppContainer() {
       const remaining = expiryTime - now;
       
       if (remaining <= 0) {
-        console.log("Sandbox expired, switching to create mode");
+        console.log("Sandbox expired, setting expired state");
         setRemainingTimeMs(null);
-        setSandbox(null);
-        setMode("create"); // Switch back to create mode when sandbox expires
+        setIsExpired(true);
+        // Don't switch modes - keep user in chat interface
       } else {
         setRemainingTimeMs(remaining);
+        setIsExpired(false);
       }
     };
 
@@ -95,11 +98,30 @@ export function AppContainer() {
   }, [sandbox?.createdAt, sandbox?.timeoutMs]);
 
   // Handle sandbox creation success
+  const handleSandboxCreateStart = useCallback((usedApiKey: string, tool: AITool) => {
+    console.log("Sandbox creation started, switching to chat mode immediately");
+    setApiKey(usedApiKey);
+    // Create a temporary sandbox object to represent the creating state
+    const tempSandbox: SandboxInfo = {
+      id: null,
+      createdAt: new Date().toISOString(),
+      tool: tool,
+      toolName: tool === "claude-code" ? "Claude Code" : "Cursor CLI",
+      session: { id: null, resumed: false }
+    };
+    setSandbox(tempSandbox);
+    setMode("chat");
+  }, []);
+
   const handleSandboxCreated = useCallback((createdSandbox: SandboxInfo, usedApiKey: string) => {
-    console.log("Sandbox created successfully, switching to chat mode", createdSandbox);
+    console.log("Sandbox created successfully, updating sandbox data", createdSandbox);
     setSandbox(createdSandbox);
     setApiKey(usedApiKey);
-    setMode("chat");
+    // Already in chat mode from handleSandboxCreateStart
+  }, []);
+
+  const handleStreamingMessages = useCallback((messages: string) => {
+    setStreamingMessages(messages);
   }, []);
 
   // Handle switching back to create mode
@@ -107,6 +129,8 @@ export function AppContainer() {
     setSandbox(null);
     setApiKey("");
     setRemainingTimeMs(null);
+    setIsExpired(false);
+    setStreamingMessages("");
     setMode("create");
   }, []);
 
@@ -123,6 +147,7 @@ export function AppContainer() {
       if (response.ok) {
         setSandbox(null);
         setRemainingTimeMs(null);
+        setIsExpired(false);
         setMode("create");
       } else {
         const data = await response.json();
@@ -130,6 +155,7 @@ export function AppContainer() {
         // For now, just switch to create mode anyway
         setSandbox(null);
         setRemainingTimeMs(null);
+        setIsExpired(false);
         setMode("create");
       }
     } catch (error) {
@@ -137,6 +163,7 @@ export function AppContainer() {
       // For now, just switch to create mode anyway
       setSandbox(null);
       setRemainingTimeMs(null);
+      setIsExpired(false);
       setMode("create");
     } finally {
       setIsStoppingSandbox(false);
@@ -156,6 +183,8 @@ export function AppContainer() {
           formatTime={formatTime}
           onStopSandbox={handleStopSandbox}
           isStoppingSandbox={isStoppingSandbox}
+          isExpired={isExpired}
+          streamingMessages={streamingMessages}
         />
       </ErrorBoundary>
     );
@@ -170,7 +199,11 @@ export function AppContainer() {
             Create AI-powered sandboxes with Claude Code or Cursor CLI
           </p>
         </div>
-        <CreateSandbox onSandboxCreated={handleSandboxCreated} />
+        <CreateSandbox 
+          onSandboxCreated={handleSandboxCreated} 
+          onSandboxCreateStart={handleSandboxCreateStart}
+          onStreamingMessages={handleStreamingMessages}
+        />
       </main>
     </div>
   );
