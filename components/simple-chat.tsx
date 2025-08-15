@@ -122,7 +122,28 @@ export function SimpleChat({
       setMessages([]);
     } else if (sandbox.id && setupTasks.length > 0) {
       // Update tasks based on current sandbox state
-      const sandboxData = sandbox as any;
+      const sandboxData = sandbox as typeof sandbox & {
+        cursorCLI?: {
+          cursorCLI?: { 
+            installed?: boolean; 
+            error?: string; 
+            version?: string;
+            promptOutput?: {
+              sessionId?: string;
+              parsedJson?: {
+                result?: string;
+                duration_ms?: number;
+                total_cost_usd?: number;
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                };
+              };
+            };
+          };
+          environment?: { configured?: boolean; error?: string };
+        };
+      };
       const toolInstalled = sandboxData.cursorCLI?.cursorCLI?.installed;
       const envConfigured = sandboxData.cursorCLI?.environment?.configured;
       const hasError = sandboxData.cursorCLI?.cursorCLI?.error || sandboxData.cursorCLI?.environment?.error;
@@ -210,7 +231,28 @@ export function SimpleChat({
       // Sandbox already exists and no setup tasks - this is a resumed session or direct navigation
       setSetupTasks([]);
     }
-  }, [sandbox.id, sandbox.toolName, sandbox.session?.id, JSON.stringify((sandbox as any).cursorCLI)]);
+  }, [sandbox.id, sandbox.toolName, sandbox.session?.id, JSON.stringify((sandbox as typeof sandbox & {
+    cursorCLI?: {
+      cursorCLI?: { 
+        installed?: boolean; 
+        error?: string; 
+        version?: string;
+        promptOutput?: {
+          sessionId?: string;
+          parsedJson?: {
+            result?: string;
+            duration_ms?: number;
+            total_cost_usd?: number;
+            usage?: {
+              input_tokens?: number;
+              output_tokens?: number;
+            };
+          };
+        };
+      };
+      environment?: { configured?: boolean; error?: string };
+    };
+  }).cursorCLI)]);
 
   // Parse streaming messages to update task status in real-time
   React.useEffect(() => {
@@ -364,7 +406,43 @@ export function SimpleChat({
           throw new Error(errorData.error || "Terminal command failed");
         }
 
-        const data = await response.json();
+        // Parse SSE streaming response
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let terminalResult = null;
+        
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6).trim();
+                if (data === '[DONE]') continue;
+                
+                try {
+                  const parsed = JSON.parse(data);
+                  
+                  // Look for the terminal result data
+                  if (parsed.type === 'data' && parsed.id === 'terminal-result' && parsed.data?.result) {
+                    terminalResult = parsed.data.result;
+                  }
+                } catch (e) {
+                  console.warn("Failed to parse SSE chunk:", data, e);
+                }
+              }
+            }
+          }
+        }
+
+        // If we didn't get a result from the stream, throw an error
+        if (!terminalResult) {
+          throw new Error("No terminal result received from stream");
+        }
         
         // Replace the loading message with the actual result
         setMessages(prev => prev.map(msg => 
@@ -373,7 +451,7 @@ export function SimpleChat({
                 ...msg,
                 terminalResult: {
                   command: currentInput,
-                  ...data.result
+                  ...terminalResult
                 }
               }
             : msg
