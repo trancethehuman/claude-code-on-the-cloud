@@ -227,7 +227,7 @@ export async function POST(request: Request) {
               sendMessage({
                 type: 'text-delta',
                 id: 'setup-tasks',
-                delta: `✅ **${toolConfig.displayName} is working perfectly!**\n\n${extractedSessionId ? `🔗 Session ID: \`${extractedSessionId}\`\n\n` : ''}`
+                delta: `✅ **${toolConfig.displayName} is working perfectly!**\n\n🔗 Tested with prompt: "${prompt}"\n\n`
               });
             } else {
               verificationResults.cursorCLI.installed = false;
@@ -270,6 +270,7 @@ export async function POST(request: Request) {
             provider: "vercel",
             tool: tool,
             toolName: toolConfig.displayName,
+            initialPrompt: prompt,
             session: {
               id: extractedSessionId,
               resumed: resumeSession,
