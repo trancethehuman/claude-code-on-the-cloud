@@ -3,6 +3,7 @@ export type AITool = 'claude-code' | 'cursor-cli';
 export interface SessionInfo {
   sessionId: string;
   toolType: AITool;
+  sandboxId: string;
   createdAt: string;
   lastUsedAt: string;
 }
@@ -71,15 +72,15 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
     },
     verification: {
       helpCommand: {
-        args: ['--help']
+        args: ['--help', '--dangerously-skip-permissions']
       },
       promptCommand: {
-        args: ['-p', 'hello', '--output-format', 'json']
+        args: ['-p', 'hello', '--output-format', 'json', '--dangerously-skip-permissions']
       }
     },
     sessionConfig: {
-      resumeCommand: (sessionId: string) => ['--resume', sessionId, '--output-format', 'json'],
-      continueCommand: ['--continue', '--output-format', 'json'],
+      resumeCommand: (sessionId: string) => ['--resume', sessionId, '--output-format', 'json', '--dangerously-skip-permissions'],
+      continueCommand: ['--continue', '--output-format', 'json', '--dangerously-skip-permissions'],
       extractSessionId: (response: any) => {
         if (typeof response === 'string') {
           try {
@@ -130,8 +131,8 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
       }
     },
     sessionConfig: {
-      resumeCommand: (sessionId: string) => ['--resume', sessionId, '--output-format', 'json'],
-      continueCommand: ['resume', '--output-format', 'json'],
+      resumeCommand: (sessionId: string) => ['-a', 'CURSOR_API_KEY_PLACEHOLDER', '--resume', sessionId, '--output-format', 'json'],
+      continueCommand: ['-a', 'CURSOR_API_KEY_PLACEHOLDER', 'resume', '--output-format', 'json'],
       listCommand: ['ls'],
       extractSessionId: (response: any) => {
         if (typeof response === 'string') {

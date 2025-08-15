@@ -9,7 +9,7 @@ type SandboxInfo = {
   createdAt: string;
   timeoutMs?: number;
   provider?: string;
-  tool?: string;
+  tool?: AITool;
   toolName?: string;
   session?: {
     id: string | null;
@@ -39,7 +39,11 @@ type NewSandboxResponse = {
   error?: string;
 };
 
-export function CreateSandbox() {
+interface CreateSandboxProps {
+  onSandboxCreated?: (sandbox: SandboxInfo, apiKey: string) => void;
+}
+
+export function CreateSandbox({ onSandboxCreated }: CreateSandboxProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sandbox, setSandbox] = useState<SandboxInfo | null>(null);
@@ -209,6 +213,64 @@ export function CreateSandbox() {
     }
   };
 
+  async function handleResumeSessionClick() {
+    if (!apiKey.trim()) {
+      setErrorMessage(`Please enter your ${currentToolConfig.apiKeyLabel.toLowerCase()}`);
+      return;
+    }
+
+    if (!selectedSessionId) {
+      setErrorMessage("Please select a session to resume");
+      return;
+    }
+
+    // Find the selected session info
+    const selectedSession = savedSessions.find(s => s.sessionId === selectedSessionId);
+    if (!selectedSession) {
+      setErrorMessage("Selected session not found");
+      return;
+    }
+
+    // Create a mock sandbox object for the existing session
+    const mockSandbox: SandboxInfo = {
+      id: selectedSession.sandboxId,
+      createdAt: selectedSession.createdAt,
+      tool: selectedTool,
+      toolName: currentToolConfig.displayName,
+      session: {
+        id: selectedSession.sessionId,
+        resumed: true,
+        requestedSessionId: selectedSession.sessionId
+      },
+      // Mock the cursorCLI structure to indicate it's ready
+      cursorCLI: {
+        cursorCLI: {
+          installed: true,
+          version: null,
+          error: null
+        },
+        environment: {
+          configured: true,
+          error: null
+        }
+      }
+    };
+
+    setSandbox(mockSandbox);
+
+    // Update session last used time
+    const updatedSessionInfo: SessionInfo = {
+      ...selectedSession,
+      lastUsedAt: new Date().toISOString()
+    };
+    saveSession(updatedSessionInfo);
+
+    // Notify parent component to switch to chat mode
+    if (onSandboxCreated) {
+      onSandboxCreated(mockSandbox, apiKey.trim());
+    }
+  }
+
   async function handleCreateSandboxClick() {
     if (!apiKey.trim()) {
       setErrorMessage(`Please enter your ${currentToolConfig.apiKeyLabel.toLowerCase()}`);
@@ -243,16 +305,22 @@ export function CreateSandbox() {
       setSandbox(data.sandbox ?? null);
       
       // Save session if one was returned
-      if (data.sandbox?.session?.id) {
+      if (data.sandbox?.session?.id && data.sandbox?.id) {
         const sessionInfo: SessionInfo = {
           sessionId: data.sandbox.session.id,
           toolType: selectedTool,
+          sandboxId: data.sandbox.id,
           createdAt: data.sandbox.session.resumed ? 
             savedSessions.find(s => s.sessionId === data.sandbox?.session?.id)?.createdAt || new Date().toISOString() :
             new Date().toISOString(),
           lastUsedAt: new Date().toISOString()
         };
         saveSession(sessionInfo);
+      }
+
+      // Notify parent component about successful creation
+      if (onSandboxCreated && data.sandbox) {
+        onSandboxCreated(data.sandbox, apiKey.trim());
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Something went wrong";
@@ -372,11 +440,15 @@ export function CreateSandbox() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={handleCreateSandboxClick}
-            disabled={isLoading || !apiKey.trim()}
+            onClick={resumeSession ? handleResumeSessionClick : handleCreateSandboxClick}
+            disabled={isLoading || !apiKey.trim() || (resumeSession && !selectedSessionId)}
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-{isLoading ? `Creating ${currentToolConfig.displayName} Sandbox...` : `Create ${currentToolConfig.displayName} Sandbox`}
+            {isLoading ? (
+              resumeSession ? `Resuming ${currentToolConfig.displayName} Session...` : `Creating ${currentToolConfig.displayName} Sandbox...`
+            ) : (
+              resumeSession ? `Resume ${currentToolConfig.displayName} Session` : `Create ${currentToolConfig.displayName} Sandbox`
+            )}
           </button>
           {(sandbox || errorMessage) && (
             <button
