@@ -1,5 +1,28 @@
 export type AITool = 'claude-code' | 'cursor-cli';
 
+export interface SessionInfo {
+  sessionId: string;
+  toolType: AITool;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+export interface Message {
+  type: 'system' | 'user' | 'assistant' | 'result' | 'error';
+  subtype?: string;
+  content?: string;
+  session_id?: string;
+  timestamp?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface SessionConfig {
+  resumeCommand: (sessionId: string) => string[];
+  continueCommand: string[];
+  listCommand?: string[];
+  extractSessionId: (response: any) => string | null;
+}
+
 export interface AIToolConfig {
   name: string;
   displayName: string;
@@ -22,6 +45,7 @@ export interface AIToolConfig {
       args: string[];
     };
   };
+  sessionConfig: SessionConfig;
 }
 
 export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
@@ -52,6 +76,29 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
       promptCommand: {
         args: ['-p', 'hello', '--output-format', 'json']
       }
+    },
+    sessionConfig: {
+      resumeCommand: (sessionId: string) => ['--resume', sessionId, '--output-format', 'json'],
+      continueCommand: ['--continue', '--output-format', 'json'],
+      extractSessionId: (response: any) => {
+        if (typeof response === 'string') {
+          try {
+            response = JSON.parse(response);
+          } catch {
+            return null;
+          }
+        }
+        if (Array.isArray(response)) {
+          for (const message of response) {
+            if (message.session_id) {
+              return message.session_id;
+            }
+          }
+        } else if (response?.session_id) {
+          return response.session_id;
+        }
+        return null;
+      }
     }
   },
   'cursor-cli': {
@@ -81,6 +128,31 @@ export const AI_TOOLS_CONFIG: Record<AITool, AIToolConfig> = {
       promptCommand: {
         args: ['-a', 'CURSOR_API_KEY_PLACEHOLDER', '-p', 'hello', '--output-format', 'json']
       }
+    },
+    sessionConfig: {
+      resumeCommand: (sessionId: string) => ['--resume', sessionId, '--output-format', 'json'],
+      continueCommand: ['resume', '--output-format', 'json'],
+      listCommand: ['ls'],
+      extractSessionId: (response: any) => {
+        if (typeof response === 'string') {
+          try {
+            response = JSON.parse(response);
+          } catch {
+            return null;
+          }
+        }
+        if (response?.chat_id || response?.id) {
+          return response.chat_id || response.id;
+        }
+        if (Array.isArray(response)) {
+          for (const message of response) {
+            if (message.chat_id || message.id) {
+              return message.chat_id || message.id;
+            }
+          }
+        }
+        return null;
+      }
     }
   }
 };
@@ -94,4 +166,24 @@ export function getAllAITools(): { value: AITool; label: string }[] {
     value: key as AITool,
     label: config.displayName
   }));
+}
+
+export function extractSessionIdFromResponse(tool: AITool, response: any): string | null {
+  const config = getAIToolConfig(tool);
+  return config.sessionConfig.extractSessionId(response);
+}
+
+export function getResumeCommand(tool: AITool, sessionId: string): string[] {
+  const config = getAIToolConfig(tool);
+  return config.sessionConfig.resumeCommand(sessionId);
+}
+
+export function getContinueCommand(tool: AITool): string[] {
+  const config = getAIToolConfig(tool);
+  return config.sessionConfig.continueCommand;
+}
+
+export function getListSessionsCommand(tool: AITool): string[] | null {
+  const config = getAIToolConfig(tool);
+  return config.sessionConfig.listCommand || null;
 }

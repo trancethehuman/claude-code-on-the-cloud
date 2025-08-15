@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Square } from "lucide-react";
-import { AITool, getAllAITools, getAIToolConfig } from "@/lib/ai-tools-config";
+import { AITool, getAllAITools, getAIToolConfig, SessionInfo } from "@/lib/ai-tools-config";
 
 type SandboxInfo = {
   id: string | null;
@@ -11,6 +11,11 @@ type SandboxInfo = {
   provider?: string;
   tool?: string;
   toolName?: string;
+  session?: {
+    id: string | null;
+    resumed: boolean;
+    requestedSessionId?: string;
+  };
   cursorCLI?: {
     cursorCLI: { 
       installed: boolean; 
@@ -21,6 +26,7 @@ type SandboxInfo = {
         stderr: string; 
         exitCode: number;
         parsedJson?: any;
+        sessionId?: string;
       } | null;
     };
     environment: { configured: boolean; error: string | null };
@@ -41,6 +47,10 @@ export function CreateSandbox() {
   const [selectedTool, setSelectedTool] = useState<AITool>("cursor-cli");
   const [remainingTimeMs, setRemainingTimeMs] = useState<number | null>(null);
   const [isStoppingSandbox, setIsStoppingSandbox] = useState(false);
+  const [savedSessions, setSavedSessions] = useState<SessionInfo[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [resumeSession, setResumeSession] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState("hello");
   
   const aiTools = getAllAITools();
   const currentToolConfig = getAIToolConfig(selectedTool);
@@ -125,6 +135,24 @@ export function CreateSandbox() {
     } else {
       setApiKey(''); // Clear if no saved key for this tool
     }
+
+    // Load saved sessions for the current tool
+    const sessionsKey = `claude-code-cloud-sessions-${selectedTool}`;
+    const savedSessionsData = localStorage.getItem(sessionsKey);
+    if (savedSessionsData) {
+      try {
+        const sessions = JSON.parse(savedSessionsData) as SessionInfo[];
+        setSavedSessions(sessions);
+      } catch {
+        setSavedSessions([]);
+      }
+    } else {
+      setSavedSessions([]);
+    }
+    
+    // Reset session selection when tool changes
+    setSelectedSessionId("");
+    setResumeSession(false);
   }, [selectedTool]);
 
   // Save API key to localStorage when it changes
@@ -142,6 +170,27 @@ export function CreateSandbox() {
   const handleToolChange = (newTool: AITool) => {
     setSelectedTool(newTool);
     localStorage.setItem('claude-code-cloud-tool', newTool);
+  };
+
+  // Save session to localStorage
+  const saveSession = (sessionInfo: SessionInfo) => {
+    const sessionsKey = `claude-code-cloud-sessions-${selectedTool}`;
+    const currentSessions = [...savedSessions];
+    
+    // Remove existing session with same ID if it exists
+    const existingIndex = currentSessions.findIndex(s => s.sessionId === sessionInfo.sessionId);
+    if (existingIndex >= 0) {
+      currentSessions[existingIndex] = sessionInfo;
+    } else {
+      currentSessions.push(sessionInfo);
+    }
+    
+    // Keep only the 10 most recent sessions
+    currentSessions.sort((a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime());
+    const limitedSessions = currentSessions.slice(0, 10);
+    
+    setSavedSessions(limitedSessions);
+    localStorage.setItem(sessionsKey, JSON.stringify(limitedSessions));
   };
 
   // Helper function to format output (JSON if possible, otherwise plain text)
@@ -176,7 +225,13 @@ export function CreateSandbox() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ apiKey: apiKey.trim(), tool: selectedTool })
+        body: JSON.stringify({ 
+          apiKey: apiKey.trim(), 
+          tool: selectedTool,
+          prompt: customPrompt,
+          resumeSession: resumeSession,
+          sessionId: selectedSessionId || undefined
+        })
       });
       const data: NewSandboxResponse = await response.json();
 
@@ -186,6 +241,19 @@ export function CreateSandbox() {
       }
 
       setSandbox(data.sandbox ?? null);
+      
+      // Save session if one was returned
+      if (data.sandbox?.session?.id) {
+        const sessionInfo: SessionInfo = {
+          sessionId: data.sandbox.session.id,
+          toolType: selectedTool,
+          createdAt: data.sandbox.session.resumed ? 
+            savedSessions.find(s => s.sessionId === data.sandbox?.session?.id)?.createdAt || new Date().toISOString() :
+            new Date().toISOString(),
+          lastUsedAt: new Date().toISOString()
+        };
+        saveSession(sessionInfo);
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Something went wrong";
       setErrorMessage(message);
@@ -241,6 +309,64 @@ export function CreateSandbox() {
           <p className="text-xs text-muted-foreground">
             API key is saved locally in your browser for convenience
           </p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="prompt" className="text-sm font-medium text-foreground">
+            Prompt
+          </label>
+          <input
+            id="prompt"
+            type="text"
+            value={customPrompt}
+            onChange={(e) => setCustomPrompt(e.target.value)}
+            placeholder="Enter your prompt..."
+            className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            disabled={isLoading}
+          />
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <input
+              id="resume-session"
+              type="checkbox"
+              checked={resumeSession}
+              onChange={(e) => setResumeSession(e.target.checked)}
+              className="rounded border-input"
+              disabled={isLoading}
+            />
+            <label htmlFor="resume-session" className="text-sm font-medium text-foreground">
+              Resume previous session
+            </label>
+          </div>
+
+          {resumeSession && (
+            <div className="space-y-2 ml-6">
+              <label htmlFor="session-select" className="text-sm font-medium text-foreground">
+                Select Session
+              </label>
+              <select
+                id="session-select"
+                value={selectedSessionId}
+                onChange={(e) => setSelectedSessionId(e.target.value)}
+                className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                disabled={isLoading}
+              >
+                <option value="">Continue latest session</option>
+                {savedSessions.map((session) => (
+                  <option key={session.sessionId} value={session.sessionId}>
+                    {session.sessionId.slice(0, 8)}... (Last used: {new Date(session.lastUsedAt).toLocaleDateString()})
+                  </option>
+                ))}
+              </select>
+              {savedSessions.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No previous sessions found for {currentToolConfig.displayName}
+                </p>
+              )}
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-3">
@@ -299,6 +425,32 @@ export function CreateSandbox() {
                 >
                   <Square className="w-3 h-3" />
                 </button>
+              </div>
+            )}
+
+            {sandbox.session && (
+              <div className="space-y-1">
+                {sandbox.session.id && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">Session:</span>
+                    <span className="text-xs font-mono text-foreground">{sandbox.session.id.slice(0, 8)}...{sandbox.session.id.slice(-8)}</span>
+                    {sandbox.session.resumed && (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-600">
+                        <span className="w-1.5 h-1.5 bg-blue-600 rounded-full"></span>
+                        Resumed
+                      </span>
+                    )}
+                  </div>
+                )}
+                {!sandbox.session.id && sandbox.session.resumed && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">Session:</span>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-600">
+                      <span className="w-1.5 h-1.5 bg-blue-600 rounded-full"></span>
+                      Continuing latest session
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

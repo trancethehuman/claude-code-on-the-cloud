@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Sandbox } from "@vercel/sandbox";
-import { AITool, getAIToolConfig } from "@/lib/ai-tools-config";
+import { AITool, getAIToolConfig, extractSessionIdFromResponse, getResumeCommand, getContinueCommand } from "@/lib/ai-tools-config";
 import { SANDBOX_ALIVE_TIME_MS } from "@/lib/constants";
 
 export const runtime = "nodejs";
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { apiKey, tool = "cursor-cli" } = body;
+    const { apiKey, tool = "cursor-cli", sessionId, prompt = "hello", resumeSession = false } = body;
 
     if (!apiKey || typeof apiKey !== "string") {
       return NextResponse.json(
@@ -56,6 +56,8 @@ export async function POST(request: Request) {
       environment: { configured: false, error: null as string | null },
     };
 
+    let extractedSessionId: string | null = null;
+
     try {
       // Install AI tool
       console.log(`Installing ${toolConfig.displayName}...`);
@@ -74,10 +76,26 @@ export async function POST(request: Request) {
         error: installError ? installError.substring(0, 200) + "..." : "none",
       });
 
-      // Test the tool directly with a prompt
-      console.log(`Testing ${toolConfig.displayName} with prompt...`);
+      // Execute prompt with session handling
+      console.log(`Testing ${toolConfig.displayName} with prompt${resumeSession ? ' (resuming session)' : ''}...`);
 
       let promptResult;
+      let commandArgs: string[];
+
+      if (resumeSession && sessionId) {
+        // Resume existing session
+        commandArgs = getResumeCommand(tool as AITool, sessionId);
+        commandArgs = [...commandArgs, '-p', prompt];
+      } else if (resumeSession && !sessionId) {
+        // Continue latest session
+        commandArgs = getContinueCommand(tool as AITool);
+        commandArgs = [...commandArgs, '-p', prompt];
+      } else {
+        // New session with prompt
+        commandArgs = [...toolConfig.verification.promptCommand.args];
+        commandArgs = commandArgs.map(arg => arg === 'hello' ? prompt : arg);
+      }
+
       if (tool === "claude-code") {
         // For Claude Code, use npx with environment variable
         promptResult = await createdSandbox.runCommand({
@@ -86,21 +104,19 @@ export async function POST(request: Request) {
             "-c",
             `export ${
               toolConfig.apiKeyEnvVar
-            }="${apiKey}" && npx @anthropic-ai/claude-code ${toolConfig.verification.promptCommand.args.join(
-              " "
-            )}`,
+            }="${apiKey}" && npx @anthropic-ai/claude-code ${commandArgs.join(" ")}`,
           ],
           sudo: true,
         });
       } else {
         // For cursor-cli, use direct execution with API key flag
-        const promptArgs = toolConfig.verification.promptCommand.args.map(
+        const finalArgs = commandArgs.map(
           (arg) => (arg === "CURSOR_API_KEY_PLACEHOLDER" ? apiKey : arg)
         );
 
         promptResult = await createdSandbox.runCommand({
           cmd: "cursor-agent",
-          args: promptArgs,
+          args: finalArgs,
           sudo: true,
         });
       }
@@ -117,6 +133,12 @@ export async function POST(request: Request) {
             `${toolConfig.displayName} PARSED JSON:`,
             JSON.stringify(parsedOutput, null, 2)
           );
+          
+          // Extract session ID from response
+          extractedSessionId = extractSessionIdFromResponse(tool as AITool, parsedOutput);
+          if (extractedSessionId) {
+            console.log(`${toolConfig.displayName} SESSION ID:`, extractedSessionId);
+          }
         } catch (parseError) {
           console.log(
             `${toolConfig.displayName} RAW OUTPUT (not JSON):`,
@@ -138,6 +160,7 @@ export async function POST(request: Request) {
           stderr: promptError || "",
           exitCode: promptResult.exitCode,
           parsedJson: parsedOutput,
+          sessionId: extractedSessionId,
         };
       } else {
         verificationResults.cursorCLI.installed = false;
@@ -167,6 +190,11 @@ export async function POST(request: Request) {
       provider: "vercel",
       tool: tool,
       toolName: toolConfig.displayName,
+      session: {
+        id: extractedSessionId,
+        resumed: resumeSession,
+        requestedSessionId: sessionId,
+      },
     };
 
     return NextResponse.json({ success: true, sandbox: info }, { status: 201 });
