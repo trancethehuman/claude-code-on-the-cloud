@@ -120,3 +120,16 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes terminal-cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.terminal-input::after {
+  content: '█';
+  color: #4ade80;
+  animation: terminal-cursor-blink 1s infinite;
+  font-size: inherit;
+  line-height: inherit;
+}

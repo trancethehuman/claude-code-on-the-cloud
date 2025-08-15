@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { CreateSandbox } from "./create-sandbox";
 import { SimpleChat } from "./simple-chat";
 import { ErrorBoundary } from "./error-boundary";
+import { TopBar } from "./top-bar";
 import { AITool } from "@/lib/ai-tools-config";
 
 type SandboxInfo = {
@@ -174,37 +175,34 @@ export function AppContainer() {
 
   if (mode === "chat" && sandbox) {
     return (
-      <ErrorBoundary>
-        <SimpleChat
-          sandbox={sandbox}
-          apiKey={apiKey}
-          onNewSandbox={handleNewSandbox}
-          remainingTimeMs={remainingTimeMs}
-          formatTime={formatTime}
-          onStopSandbox={handleStopSandbox}
-          isStoppingSandbox={isStoppingSandbox}
-          isExpired={isExpired}
-          streamingMessages={streamingMessages}
-        />
-      </ErrorBoundary>
+      <div className="flex h-screen flex-col">
+        <ErrorBoundary>
+          <SimpleChat
+            sandbox={sandbox}
+            apiKey={apiKey}
+            onNewSandbox={handleNewSandbox}
+            remainingTimeMs={remainingTimeMs}
+            formatTime={formatTime}
+            onStopSandbox={handleStopSandbox}
+            isStoppingSandbox={isStoppingSandbox}
+            isExpired={isExpired}
+            streamingMessages={streamingMessages}
+          />
+        </ErrorBoundary>
+      </div>
     );
   }
 
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold mb-2">CLI on the Cloud</h1>
-          <p className="text-muted-foreground">
-            Create AI-powered sandboxes with Claude Code or Cursor CLI
-          </p>
-        </div>
+    <div className="flex h-screen flex-col">
+      <TopBar title="CLI on the Cloud" subtitle="Create AI-powered sandboxes with Claude Code or Cursor CLI" />
+      <div className="flex-1 flex items-center justify-center p-8">
         <CreateSandbox 
           onSandboxCreated={handleSandboxCreated} 
           onSandboxCreateStart={handleSandboxCreateStart}
           onStreamingMessages={handleStreamingMessages}
         />
-      </main>
+      </div>
     </div>
   );
 }

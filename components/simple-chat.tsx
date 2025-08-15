@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { SessionInfo, AITool } from "@/lib/ai-tools-config";
 import { TerminalMessage } from "./terminal-message";
+import { TerminalInput } from "./terminal-input";
+import { TopBar } from "./top-bar";
 import { Button } from "./ui/button";
 // Removed Tooltip imports to fix infinite re-render issue
 import { Loader } from "./ai-elements/loader";
@@ -669,76 +671,55 @@ export function SimpleChat({
 
   return (
     <div className="flex h-screen max-h-screen flex-col">
-      {/* Header with sandbox info */}
-      <div className="border-b bg-muted/20 p-4">
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold">
-                {sandbox.toolName || "AI Tool"} Chat
-              </h2>
-              <span className="text-xs text-muted-foreground">
-                Sandbox: {sandbox.id ? sandbox.id.slice(0, 8) + "..." : "N/A"}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              {remainingTimeMs !== null && (
-                <div className="flex items-center gap-1">
-                  <span>Time remaining:</span>
-                  <span
-                    className={`font-mono ${
-                      remainingTimeMs < 60000 ? "text-red-600" : ""
-                    }`}
-                  >
-                    {formatTime(remainingTimeMs)}
-                  </span>
-                </div>
-              )}
-            </div>
+      <TopBar 
+        subtitle={remainingTimeMs !== null ? (
+          <div className="flex items-center gap-1">
+            <span>Time remaining:</span>
+            <span
+              className={`font-mono ${
+                remainingTimeMs < 60000 ? "text-red-600" : ""
+              }`}
+            >
+              {formatTime(remainingTimeMs)}
+            </span>
           </div>
+        ) : undefined}
+      >
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setMessages([]);
+              setCurrentSessionId(null);
+              setError(null);
+            }}
+            disabled={isExpired}
+            title="New Chat"
+          >
+            <RotateCcw className="w-4 h-4" />
+          </Button>
 
-          <div className="flex items-center gap-3">
-            <div className="h-4 w-px bg-border" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onStopSandbox}
+            disabled={isStoppingSandbox || isExpired}
+            title={isStoppingSandbox ? "Stopping..." : "Stop Sandbox"}
+          >
+            <Square className="w-4 h-4" />
+          </Button>
 
-            {/* Action Buttons */}
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  setMessages([]);
-                  setCurrentSessionId(null);
-                  setError(null);
-                }}
-                disabled={isExpired}
-                title="New Chat"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </Button>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onStopSandbox}
-                disabled={isStoppingSandbox || isExpired}
-                title={isStoppingSandbox ? "Stopping..." : "Stop Sandbox"}
-              >
-                <Square className="w-4 h-4" />
-              </Button>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onNewSandbox}
-                title="New Sandbox"
-              >
-                <Plus className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onNewSandbox}
+            title="New Sandbox"
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
         </div>
-      </div>
+      </TopBar>
 
       {/* Expired State Banner */}
       {isExpired && (
@@ -878,63 +859,102 @@ export function SimpleChat({
 
       {/* Input area */}
       <div className="border-t bg-background p-4">
-        <PromptInput onSubmit={handleSubmit} className="relative">
-          <PromptInputTextarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              isExpired
-                ? "Sandbox expired - create a new sandbox to continue"
-                : isTerminalMode
-                ? "Enter command (e.g., ls, pwd, cat file.txt)..."
-                : `Message ${sandbox.toolName || "AI tool"}...`
-            }
-            disabled={isLoading || isExpired}
-            className={`resize-none ${isTerminalMode ? "font-mono" : ""} ${
-              isExpired
-                ? "bg-muted text-muted-foreground cursor-not-allowed"
-                : ""
-            }`}
-          />
-          <PromptInputToolbar>
-            <PromptInputTools>
-              {/* Mode Toggle */}
-              <div className="flex items-center bg-muted rounded-md p-0.5">
-                <Button
-                  type="button"
-                  variant={!isTerminalMode ? "default" : "ghost"}
-                  size="sm"
-                  className={`h-7 w-8 p-0 ${!isTerminalMode ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setIsTerminalMode(false)}
-                  disabled={isSwitchDisabled}
+        {isTerminalMode ? (
+          <div className="flex items-center gap-3">
+            <div className="flex items-center bg-muted rounded-md p-0.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-8 p-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setIsTerminalMode(false)}
+                disabled={isSwitchDisabled}
+              >
+                <MessageSquare className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="h-7 w-8 p-0 text-primary-foreground"
+                onClick={() => setIsTerminalMode(true)}
+                disabled={isSwitchDisabled}
+              >
+                <Terminal className="size-4" />
+              </Button>
+            </div>
+            <TerminalInput
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onSubmit={(command) => {
+                if (!command.trim() || isLoading) return;
+                const event = new Event('submit', { bubbles: true, cancelable: true }) as unknown as React.FormEvent;
+                handleSubmit(event);
+              }}
+              disabled={isLoading || isExpired}
+              placeholder={isExpired ? "Sandbox expired" : ""}
+              className="flex-1"
+            />
+          </div>
+        ) : (
+          <div className="flex items-start gap-3">
+            <div className="flex items-center bg-muted rounded-md p-0.5 mt-1">
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="h-7 w-8 p-0 text-primary-foreground"
+                onClick={() => setIsTerminalMode(false)}
+                disabled={isSwitchDisabled}
+              >
+                <MessageSquare className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-8 p-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setIsTerminalMode(true)}
+                disabled={isSwitchDisabled}
+              >
+                <Terminal className="size-4" />
+              </Button>
+            </div>
+            <PromptInput onSubmit={handleSubmit} className="relative flex-1">
+              <PromptInputTextarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={
+                  isExpired
+                    ? "Sandbox expired - create a new sandbox to continue"
+                    : `Message ${sandbox.toolName || "AI tool"}...`
+                }
+                disabled={isLoading || isExpired}
+                className={`resize-none ${
+                  isExpired
+                    ? "bg-muted text-muted-foreground cursor-not-allowed"
+                    : ""
+                }`}
+              />
+              <PromptInputToolbar>
+                <PromptInputTools>
+                  {/* Empty tools area */}
+                </PromptInputTools>
+                <PromptInputSubmit
+                  className="relative"
+                  disabled={isSubmitDisabled}
+                  status={submitStatus}
                 >
-                  <MessageSquare className="size-4" />
-                </Button>
-                <Button
-                  type="button"
-                  variant={isTerminalMode ? "default" : "ghost"}
-                  size="sm"
-                  className={`h-7 w-8 p-0 ${isTerminalMode ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setIsTerminalMode(true)}
-                  disabled={isSwitchDisabled}
-                >
-                  <Terminal className="size-4" />
-                </Button>
-              </div>
-            </PromptInputTools>
-            <PromptInputSubmit
-              className="relative"
-              disabled={isSubmitDisabled}
-              status={submitStatus}
-            >
-              {isLoading ? (
-                <Loader size={16} />
-              ) : (
-                <ArrowUp className="size-4" />
-              )}
-            </PromptInputSubmit>
-          </PromptInputToolbar>
-        </PromptInput>
+                  {isLoading ? (
+                    <Loader size={16} />
+                  ) : (
+                    <ArrowUp className="size-4" />
+                  )}
+                </PromptInputSubmit>
+              </PromptInputToolbar>
+            </PromptInput>
+          </div>
+        )}
       </div>
     </div>
   );
