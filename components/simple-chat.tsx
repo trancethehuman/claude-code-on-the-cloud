@@ -10,6 +10,7 @@ import {
   DollarSign,
   Hash,
   Info,
+  ArrowUp,
 } from "lucide-react";
 import { SessionInfo, AITool } from "@/lib/ai-tools-config";
 import { TerminalMessage } from "./terminal-message";
@@ -186,7 +187,6 @@ export function SimpleChat({
               ...task,
               status: "completed" as TaskStatus,
               description: `Sandbox created successfully`,
-              details: [`Sandbox ID: ${sandbox.id}`],
             };
           } else if (task.id === "install-tool") {
             if (hasError && !toolInstalled) {
@@ -201,9 +201,6 @@ export function SimpleChat({
                 ...task,
                 status: "completed" as TaskStatus,
                 description: `${sandbox.toolName} installed successfully`,
-                details: sandboxData.cursorCLI?.cursorCLI?.version
-                  ? [`Version: ${sandboxData.cursorCLI.cursorCLI.version}`]
-                  : undefined,
               };
             } else {
               return {
@@ -228,9 +225,7 @@ export function SimpleChat({
                 ...task,
                 status: "completed" as TaskStatus,
                 description: "Connection verified and session established",
-                details: initialPrompt
-                  ? [`Tested with: "${initialPrompt}"`]
-                  : ["Ready to use"],
+                details: initialPrompt ? [`Tested with: "${initialPrompt}"`] : undefined,
               };
             } else if (toolInstalled) {
               return {
@@ -312,13 +307,10 @@ export function SimpleChat({
           if (
             streamingMessages.includes("✅ **Sandbox created successfully**")
           ) {
-            const sandboxIdMatch = streamingMessages.match(/ID: `([^`]+)`/);
-            const sandboxId = sandboxIdMatch ? sandboxIdMatch[1] : "";
             return {
               ...task,
               status: "completed" as TaskStatus,
               description: "Sandbox created successfully",
-              details: sandboxId ? [`Sandbox ID: ${sandboxId}`] : undefined,
             };
           } else if (streamingMessages.includes("Creating Vercel Sandbox")) {
             return {
@@ -422,12 +414,6 @@ export function SimpleChat({
     return isLoading || !input.trim() || isExpired;
   }, [isLoading, input, isExpired]);
 
-  const submitButtonText = useMemo(() => {
-    if (isLoading) {
-      return isTerminalMode ? "Running..." : "Sending...";
-    }
-    return isTerminalMode ? "Run" : "Send";
-  }, [isLoading, isTerminalMode]);
 
   // Memoize Switch props to prevent re-renders
   const isSwitchDisabled = useMemo(() => {
@@ -928,8 +914,11 @@ export function SimpleChat({
               disabled={isSubmitDisabled}
               status={submitStatus}
             >
-              {isLoading && <Loader size={12} className="mr-1" />}
-              {submitButtonText}
+              {isLoading ? (
+                <Loader size={16} />
+              ) : (
+                <ArrowUp className="size-4" />
+              )}
             </PromptInputSubmit>
           </PromptInputToolbar>
         </PromptInput>

@@ -1,6 +1,6 @@
 import { Sandbox } from "@vercel/sandbox";
 import { AITool, getAIToolConfig, extractSessionIdFromResponse, getResumeCommand, getContinueCommand } from "@/lib/ai-tools-config";
-import { SANDBOX_ALIVE_TIME_MS } from "@/lib/constants";
+import { DEFAULT_SANDBOX_ALIVE_TIME_MS } from "@/lib/constants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       const processRequest = async () => {
         try {
           const body = await request.json();
-          const { apiKey, tool = "cursor-cli", sessionId, prompt = "hello", resumeSession = false } = body;
+          const { apiKey, tool = "cursor-cli", sessionId, prompt = "hello", resumeSession = false, aliveTimeMinutes } = body;
 
           if (!apiKey || typeof apiKey !== "string") {
             sendMessage({
@@ -28,6 +28,21 @@ export async function POST(request: Request) {
             });
             controller.close();
             return;
+          }
+
+          // Validate and set sandbox alive time
+          let sandboxTimeoutMs = DEFAULT_SANDBOX_ALIVE_TIME_MS;
+          if (aliveTimeMinutes !== undefined) {
+            if (typeof aliveTimeMinutes !== "number" || aliveTimeMinutes < 1 || aliveTimeMinutes > 10) {
+              sendMessage({
+                type: 'text-delta',
+                id: 'error',
+                delta: "❌ Sandbox alive time must be between 1 and 10 minutes"
+              });
+              controller.close();
+              return;
+            }
+            sandboxTimeoutMs = aliveTimeMinutes * 60 * 1000; // Convert minutes to milliseconds
           }
 
           if (
@@ -64,7 +79,7 @@ export async function POST(request: Request) {
           const createdSandbox = await Sandbox.create({
             resources: { vcpus: 2 },
             runtime: "node22",
-            timeout: SANDBOX_ALIVE_TIME_MS,
+            timeout: sandboxTimeoutMs,
           });
 
           const id = createdSandbox.sandboxId;
@@ -265,7 +280,7 @@ export async function POST(request: Request) {
           const info = {
             id,
             createdAt: new Date().toISOString(),
-            timeoutMs: SANDBOX_ALIVE_TIME_MS,
+            timeoutMs: sandboxTimeoutMs,
             cursorCLI: verificationResults,
             provider: "vercel",
             tool: tool,

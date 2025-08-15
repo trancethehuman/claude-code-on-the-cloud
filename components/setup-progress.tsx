@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Task, TaskContent, TaskItem, TaskTrigger } from './ai-elements/task';
-import { CheckCircleIcon, AlertCircleIcon, Loader2Icon, CircleIcon } from 'lucide-react';
+import { AlertCircleIcon, Loader2Icon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'failed';
@@ -24,13 +24,13 @@ interface SetupProgressProps {
 const StatusIcon = ({ status }: { status: TaskStatus }) => {
   switch (status) {
     case 'pending':
-      return <CircleIcon className="w-4 h-4 text-muted-foreground" />;
+      return null; // No icon for pending
     case 'in-progress':
-      return <Loader2Icon className="w-4 h-4 text-blue-600 animate-spin" />;
+      return <Loader2Icon className="w-3 h-3 text-blue-600 animate-spin" />;
     case 'completed':
-      return <CheckCircleIcon className="w-4 h-4 text-green-600" />;
+      return null; // No icon for completed, just use text color
     case 'failed':
-      return <AlertCircleIcon className="w-4 h-4 text-red-600" />;
+      return <AlertCircleIcon className="w-3 h-3 text-red-600" />;
   }
 };
 
@@ -82,45 +82,27 @@ export function SetupProgress({ tasks, toolName }: SetupProgressProps) {
         <TaskContent>
           {tasks.map((task) => (
             <TaskItem key={task.id}>
-              <div className="flex items-start gap-3 py-2">
+              <div className="flex items-center gap-2">
                 <StatusIcon status={task.status} />
                 <div className="flex-1">
-                  <div className={cn("text-sm font-medium", getStatusColor(task.status))}>
+                  <span className={cn("text-sm", getStatusColor(task.status))}>
                     {task.title}
-                  </div>
-                  {task.description && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {task.description}
-                    </div>
-                  )}
+                  </span>
                   {task.error && (
-                    <div className="text-red-600 text-xs mt-2">
-                      ❌ Error: {task.error}
-                    </div>
+                    <span className="text-red-600 text-xs ml-2">
+                      - {task.error}
+                    </span>
                   )}
-                  {task.details && task.details.map((detail, index) => (
-                    <div key={index} className="text-xs text-muted-foreground mt-1">
-                      {detail}
-                    </div>
-                  ))}
+                  {task.status === 'completed' && task.details && task.details.some(detail => detail.includes('Tested with:')) && (
+                    <span className="text-muted-foreground text-xs ml-2">
+                      - {task.details.find(detail => detail.includes('Tested with:'))}
+                    </span>
+                  )}
                 </div>
               </div>
             </TaskItem>
           ))}
 
-          {isComplete && (
-            <TaskItem>
-              <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                <div className="flex items-center gap-2 text-green-700">
-                  <CheckCircleIcon className="w-5 h-5" />
-                  <span className="font-medium">Setup Complete!</span>
-                </div>
-                <p className="text-sm text-green-600 mt-1">
-                  Your {toolName} environment is ready to use. You can now start chatting or switch to terminal mode.
-                </p>
-              </div>
-            </TaskItem>
-          )}
 
           {hasFailedTask && (
             <TaskItem>

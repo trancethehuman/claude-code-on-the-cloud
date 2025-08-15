@@ -55,6 +55,7 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [resumeSession, setResumeSession] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("hello");
+  const [aliveTimeMinutes, setAliveTimeMinutes] = useState(5);
   
   const aiTools = getAllAITools();
   const currentToolConfig = getAIToolConfig(selectedTool);
@@ -300,7 +301,8 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
           tool: selectedTool,
           prompt: customPrompt,
           resumeSession: resumeSession,
-          sessionId: selectedSessionId || undefined
+          sessionId: selectedSessionId || undefined,
+          aliveTimeMinutes: aliveTimeMinutes
         })
       });
 
@@ -442,6 +444,33 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             disabled={isLoading}
           />
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="alive-time" className="text-sm font-medium text-foreground">
+            Sandbox Duration
+          </label>
+          <select
+            id="alive-time"
+            value={aliveTimeMinutes}
+            onChange={(e) => setAliveTimeMinutes(Number(e.target.value))}
+            className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            disabled={isLoading}
+          >
+            <option value={1}>1 minute</option>
+            <option value={2}>2 minutes</option>
+            <option value={3}>3 minutes</option>
+            <option value={4}>4 minutes</option>
+            <option value={5}>5 minutes (default)</option>
+            <option value={6}>6 minutes</option>
+            <option value={7}>7 minutes</option>
+            <option value={8}>8 minutes</option>
+            <option value={9}>9 minutes</option>
+            <option value={10}>10 minutes</option>
+          </select>
+          <p className="text-xs text-muted-foreground">
+            Sandbox will automatically stop after this time to manage costs
+          </p>
         </div>
 
         <div className="space-y-3">
