@@ -174,13 +174,22 @@ export async function POST(request: Request) {
 
             if (tool === "claude-code") {
               // For Claude Code, use npx with environment variable (no sudo for prompts)
+              // Properly escape the prompt to handle URLs and special characters
+              const escapedArgs = commandArgs.map(arg => {
+                // If this arg is the prompt (contains special characters), quote it properly
+                if (arg === prompt) {
+                  return JSON.stringify(arg);
+                }
+                return arg;
+              });
+              
               promptResult = await createdSandbox.runCommand({
                 cmd: "bash",
                 args: [
                   "-c",
                   `export ${
                     toolConfig.apiKeyEnvVar
-                  }="${apiKey}" && npx @anthropic-ai/claude-code ${commandArgs.join(" ")}`,
+                  }="${apiKey}" && npx @anthropic-ai/claude-code ${escapedArgs.join(" ")}`,
                 ],
                 sudo: false,
               });

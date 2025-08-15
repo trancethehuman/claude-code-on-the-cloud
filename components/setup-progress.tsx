@@ -67,7 +67,6 @@ export function SetupProgress({ tasks, toolName }: SetupProgressProps) {
           title={`Setting up ${toolName} (${completedTasks}/${totalTasks} ${isComplete ? 'complete' : 'in progress'})`}
         >
           <div className="flex items-center gap-3 w-full p-2 hover:bg-accent rounded-lg cursor-pointer">
-            <StatusIcon status={overallStatus} />
             <div className="flex-1 text-left">
               <div className={cn("text-sm font-medium", getStatusColor(overallStatus))}>
                 Setting up {toolName}

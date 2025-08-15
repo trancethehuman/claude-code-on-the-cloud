@@ -11,11 +11,12 @@ import {
   Hash,
   Info,
   ArrowUp,
+  MessageSquare,
+  Terminal,
 } from "lucide-react";
 import { SessionInfo, AITool } from "@/lib/ai-tools-config";
 import { TerminalMessage } from "./terminal-message";
 import { Button } from "./ui/button";
-import { Switch } from "./ui/switch";
 // Removed Tooltip imports to fix infinite re-render issue
 import { Loader } from "./ai-elements/loader";
 import { Actions, Action } from "./ai-elements/actions";
@@ -142,9 +143,9 @@ export function SimpleChat({
         },
         {
           id: "test-connection",
-          title: "Test Connection",
+          title: "Processing Initial Request",
           status: "pending",
-          description: "Verifying installation and API connection...",
+          description: "Processing your request...",
         },
       ];
 
@@ -215,7 +216,7 @@ export function SimpleChat({
                 ...task,
                 status: "failed" as TaskStatus,
                 error: sandboxData.cursorCLI?.environment?.error,
-                description: "Connection test failed",
+                description: "Request processing failed",
               };
             } else if (toolInstalled && envConfigured) {
               const initialPrompt = (
@@ -224,14 +225,14 @@ export function SimpleChat({
               return {
                 ...task,
                 status: "completed" as TaskStatus,
-                description: "Connection verified and session established",
-                details: initialPrompt ? [`Tested with: "${initialPrompt}"`] : undefined,
+                description: "Request processed successfully",
+                details: initialPrompt ? [`Working on: "${initialPrompt}"`] : undefined,
               };
             } else if (toolInstalled) {
               return {
                 ...task,
                 status: "in-progress" as TaskStatus,
-                description: "Testing connection and API setup...",
+                description: "Processing your request...",
               };
             } else {
               return task;
@@ -373,8 +374,8 @@ export function SimpleChat({
             return {
               ...task,
               status: "completed" as TaskStatus,
-              description: "Connection verified and session established",
-              details: prompt ? [`Tested with: "${prompt}"`] : ["Ready to use"],
+              description: "Request processed successfully",
+              details: prompt ? [`Working on: "${prompt}"`] : ["Ready to use"],
             };
           } else if (
             streamingMessages.includes(`❌ **${sandbox.toolName} test failed**`)
@@ -382,8 +383,8 @@ export function SimpleChat({
             return {
               ...task,
               status: "failed" as TaskStatus,
-              error: "Connection test failed",
-              description: "Connection test failed",
+              error: "Request processing failed",
+              description: "Request processing failed",
             };
           } else if (
             streamingMessages.includes(
@@ -396,7 +397,7 @@ export function SimpleChat({
             return {
               ...task,
               status: "in-progress" as TaskStatus,
-              description: "Testing connection and API setup...",
+              description: "Processing your request...",
             };
           }
         }
@@ -760,7 +761,7 @@ export function SimpleChat({
       )}
 
       {/* Chat messages */}
-      <Conversation className="flex-1">
+      <Conversation className="flex-1 overflow-hidden">
         <ConversationContent>
           {/* Show setup progress if we have setup tasks */}
           {setupTasks.length > 0 && (
@@ -897,16 +898,28 @@ export function SimpleChat({
           />
           <PromptInputToolbar>
             <PromptInputTools>
-              {/* Mode Switch */}
-              <div className="flex items-center gap-2 px-2">
-                <Switch
-                  checked={isTerminalMode}
-                  onCheckedChange={setIsTerminalMode}
+              {/* Mode Toggle */}
+              <div className="flex items-center bg-muted rounded-md p-0.5">
+                <Button
+                  type="button"
+                  variant={!isTerminalMode ? "default" : "ghost"}
+                  size="sm"
+                  className={`h-7 w-8 p-0 ${!isTerminalMode ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setIsTerminalMode(false)}
                   disabled={isSwitchDisabled}
-                />
-                <span className="text-xs text-muted-foreground">
-                  {isTerminalMode ? "Terminal" : "Chat"}
-                </span>
+                >
+                  <MessageSquare className="size-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant={isTerminalMode ? "default" : "ghost"}
+                  size="sm"
+                  className={`h-7 w-8 p-0 ${isTerminalMode ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setIsTerminalMode(true)}
+                  disabled={isSwitchDisabled}
+                >
+                  <Terminal className="size-4" />
+                </Button>
               </div>
             </PromptInputTools>
             <PromptInputSubmit
