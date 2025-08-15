@@ -424,7 +424,8 @@ material under section 10.
 
 You are not required to accept this License in order to receive or
 run a copy of the Program. Ancillary propagation of a covered work
-occurring solely as a consequence of using peer-to-peer transmission to receive a copy likewise does not require acceptance. However,
+occurring solely as a consequence of using peer-to-peer transmission
+to receive a copy likewise does not require acceptance. However,
 nothing other than this License grants you permission to propagate or
 modify any covered work. These actions infringe copyright if you do
 not accept this License. Therefore, by modifying or propagating a
@@ -439,7 +440,8 @@ for enforcing compliance by third parties with this License.
 
 An "entity transaction" is a transaction transferring control of an
 organization, or substantially all assets of one, or subdividing an
-organization, or merging organizations. If propagation of a covered work results from an entity transaction, each party to that
+organization, or merging organizations. If propagation of a covered
+work results from an entity transaction, each party to that
 transaction who receives a copy of the work also receives whatever
 licenses to the work the party's predecessor in interest had or could
 give under the previous paragraph, plus a right to possession of the
@@ -449,7 +451,7 @@ the predecessor has it or can get it with reasonable efforts.
 You may not impose any further restrictions on the exercise of the
 rights granted or affirmed under this License. For example, you may
 not impose a license fee, royalty, or other charge for exercise of
-the rights granted under this License, and you may not initiate litigation
+rights granted under this License, and you may not initiate litigation
 (including a cross-claim or counterclaim in a lawsuit) alleging that
 any patent claim is infringed by making, using, selling, offering for
 sale, or importing the Program or any portion of it.
@@ -658,7 +660,7 @@ if any, to sign a "copyright disclaimer" for the program, if necessary.
 For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 
-Copyright (c) 2024 Cats with Bats Inc.
+Copyright (c) 2025 Cats with Bats Inc.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -674,4 +676,5 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For more information, please contact:
+
 Cats with Bats Inc.
