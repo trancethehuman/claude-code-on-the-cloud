@@ -9,6 +9,7 @@ export interface SandboxInfo {
   provider?: string;
   tool?: AITool;
   toolName?: string;
+  initialPrompt?: string;
   session?: {
     id: string | null;
     resumed: boolean;

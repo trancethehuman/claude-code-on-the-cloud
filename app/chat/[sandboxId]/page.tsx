@@ -151,6 +151,8 @@ export default function ChatPage({ params }: ChatPageProps) {
             // Load API key based on tool
             const key = sandboxData.tool ? apiKeyStorage.getApiKey(sandboxData.tool) : apiKeyStorage.getAnyApiKey();
             setApiKey(key || '');
+            // Set initial prompt if available
+            setInitialPrompt(sandboxData.initialPrompt);
           } else {
             // Sandbox not found in storage - redirect to home
             console.warn(`Sandbox ${sandboxId} not found in storage`);

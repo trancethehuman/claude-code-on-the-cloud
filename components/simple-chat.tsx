@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { SessionInfo, AITool } from "@/lib/ai-tools-config";
 import { ChatHeader } from "./chat/chat-header";
 import { ChatMessages } from "./chat/chat-messages";
 import { ChatInput } from "./chat/chat-input";
 import { useChatSession } from "./chat/hooks/use-chat-session";
 import { useSetupTasks } from "./chat/hooks/use-setup-tasks";
+import { SetupTask } from "./setup-status";
 
 import { SandboxInfo } from "@/hooks/use-sandbox-storage";
 
@@ -62,6 +63,7 @@ export function SimpleChat({
         stdout: string;
         stderr: string;
       };
+      setupTasks?: SetupTask[];
     }>
   >([]);
 
@@ -69,6 +71,10 @@ export function SimpleChat({
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Track if initial messages have been added
+  const initialMessagesAdded = useRef(false);
+  const setupMessageAdded = useRef(false);
 
   // Initialize session ID from sandbox
   useEffect(() => {
@@ -77,41 +83,97 @@ export function SimpleChat({
     }
   }, [sandbox.session?.id, currentSessionId, setCurrentSessionId]);
 
-  // Add initial message from sandbox creation if available
+  // Add initial messages and setup status when sandbox creation is complete
   useEffect(() => {
-    if (sandbox.cursorCLI?.cursorCLI.promptOutput && initialPrompt) {
+    if (sandbox.cursorCLI?.cursorCLI.promptOutput && initialPrompt && !initialMessagesAdded.current) {
       const promptOutput = sandbox.cursorCLI.cursorCLI.promptOutput;
+      const allTasksCompleted = setupTasks.length > 0 && setupTasks.every(task => task.status === 'completed');
       
-      // Only add initial messages if we don't have any messages yet
-      if (messages.length === 0) {
-        const initialMessages = [
-          {
-            id: `initial_user_${Date.now()}`,
-            role: "user" as const,
-            content: initialPrompt,
-            type: "chat" as const,
-          },
-          {
-            id: `initial_assistant_${Date.now()}`,
-            role: "assistant" as const,
-            content: promptOutput.parsedJson?.result ? String(promptOutput.parsedJson.result) : promptOutput.stdout,
-            type: "chat" as const,
-            metadata: {
-              sessionId: promptOutput.sessionId,
-              duration_ms: promptOutput.parsedJson?.duration_ms ? Number(promptOutput.parsedJson.duration_ms) : undefined,
-              total_cost_usd: promptOutput.parsedJson?.total_cost_usd ? Number(promptOutput.parsedJson.total_cost_usd) : undefined,
-              usage: promptOutput.parsedJson?.usage ? {
-                input_tokens: promptOutput.parsedJson.usage.input_tokens ? Number(promptOutput.parsedJson.usage.input_tokens) : undefined,
-                output_tokens: promptOutput.parsedJson.usage.output_tokens ? Number(promptOutput.parsedJson.usage.output_tokens) : undefined,
-              } : undefined,
-              exitCode: promptOutput.exitCode,
-            },
-          },
-        ];
-        setMessages(initialMessages);
+      const messagesToAdd = [];
+      
+      // Add setup message first if setup is complete
+      if (allTasksCompleted && !setupMessageAdded.current) {
+        messagesToAdd.push({
+          id: `setup_${Date.now()}`,
+          role: "assistant" as const,
+          content: "", // Will be rendered as SetupStatus component
+          type: "setup" as const,
+          setupTasks: [...setupTasks], // Store the completed tasks
+        });
+        setupMessageAdded.current = true;
       }
+      
+      // Add user prompt and AI response
+      messagesToAdd.push(
+        {
+          id: `initial_user_${Date.now()}`,
+          role: "user" as const,
+          content: initialPrompt,
+          type: "chat" as const,
+        },
+        {
+          id: `initial_assistant_${Date.now()}`,
+          role: "assistant" as const,
+          content: promptOutput.parsedJson?.result ? String(promptOutput.parsedJson.result) : promptOutput.stdout,
+          type: "chat" as const,
+          metadata: {
+            sessionId: promptOutput.sessionId,
+            duration_ms: promptOutput.parsedJson?.duration_ms ? Number(promptOutput.parsedJson.duration_ms) : undefined,
+            total_cost_usd: promptOutput.parsedJson?.total_cost_usd ? Number(promptOutput.parsedJson.total_cost_usd) : undefined,
+            usage: promptOutput.parsedJson?.usage ? {
+              input_tokens: promptOutput.parsedJson.usage.input_tokens ? Number(promptOutput.parsedJson.usage.input_tokens) : undefined,
+              output_tokens: promptOutput.parsedJson.usage.output_tokens ? Number(promptOutput.parsedJson.usage.output_tokens) : undefined,
+            } : undefined,
+            exitCode: promptOutput.exitCode,
+          },
+        }
+      );
+      
+      setMessages(messagesToAdd);
+      initialMessagesAdded.current = true;
     }
-  }, [sandbox.cursorCLI?.cursorCLI.promptOutput, initialPrompt, messages.length]);
+  }, [sandbox.cursorCLI?.cursorCLI.promptOutput, initialPrompt, setupTasks]);
+
+  // Add setup message for completed sandboxes (including existing ones)
+  useEffect(() => {
+    const isSetupComplete = sandbox.id && sandbox.cursorCLI?.cursorCLI?.installed && sandbox.cursorCLI?.environment?.configured;
+    
+    if (isSetupComplete && !setupMessageAdded.current) {
+      // Create completed setup tasks based on sandbox state
+      const completedTasks = [
+        {
+          id: "create-sandbox",
+          title: "Create Vercel Sandbox",
+          status: "completed" as const,
+          description: "Sandbox created successfully",
+        },
+        {
+          id: "install-tool",
+          title: `Install ${sandbox.toolName || 'AI Tool'}`,
+          status: "completed" as const,
+          description: `${sandbox.toolName} installed successfully`,
+        },
+        {
+          id: "test-connection",
+          title: "Processing Initial Request",
+          status: "completed" as const,
+          description: "Request processed successfully",
+          details: sandbox.initialPrompt ? [`Working on: "${sandbox.initialPrompt}"`] : undefined,
+        },
+      ];
+      
+      const setupMessage = {
+        id: `setup_${Date.now()}`,
+        role: "assistant" as const,
+        content: "",
+        type: "setup" as const,
+        setupTasks: completedTasks,
+      };
+      
+      setMessages(prev => [setupMessage, ...prev]);
+      setupMessageAdded.current = true;
+    }
+  }, [sandbox.id, sandbox.cursorCLI?.cursorCLI?.installed, sandbox.cursorCLI?.environment?.configured, sandbox.toolName, sandbox.initialPrompt]);
 
 
 

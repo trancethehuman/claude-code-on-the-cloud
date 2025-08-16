@@ -30,6 +30,7 @@ interface Message {
     stdout: string;
     stderr: string;
   };
+  setupTasks?: SetupTask[];
 }
 
 interface SetupTask {
@@ -59,8 +60,8 @@ export function ChatMessages({
   return (
     <Conversation className="flex-1 overflow-hidden">
       <ConversationContent>
-        {/* Show setup progress if we have setup tasks */}
-        {setupTasks.length > 0 && (
+        {/* Show live setup progress if we have in-progress setup tasks */}
+        {setupTasks.length > 0 && setupTasks.some(task => task.status === 'pending' || task.status === 'in-progress') && (
           <div className="mb-6">
             <SetupStatus
               tasks={setupTasks}
@@ -94,6 +95,17 @@ export function ChatMessages({
                 command={message.terminalResult.command}
                 result={message.terminalResult}
               />
+            );
+          }
+
+          if (message.type === "setup" && message.setupTasks) {
+            return (
+              <div key={message.id} className="mb-6">
+                <SetupStatus
+                  tasks={message.setupTasks}
+                  toolName={toolName || "AI Tool"}
+                />
+              </div>
             );
           }
 
