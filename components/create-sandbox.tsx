@@ -1,38 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Square } from "lucide-react";
 import { AITool, getAllAITools, getAIToolConfig, SessionInfo } from "@/lib/ai-tools-config";
+import { useApiKeys } from "@/hooks/use-api-keys";
+import { useSandboxStorage, SandboxInfo } from "@/hooks/use-sandbox-storage";
+import { useSessionStorage } from "@/hooks/use-session-storage";
 import { Loader } from "./ai-elements/loader";
 
-type SandboxInfo = {
-  id: string | null;
-  createdAt: string;
-  timeoutMs?: number;
-  provider?: string;
-  tool?: AITool;
-  toolName?: string;
-  session?: {
-    id: string | null;
-    resumed: boolean;
-    requestedSessionId?: string;
-  };
-  cursorCLI?: {
-    cursorCLI: { 
-      installed: boolean; 
-      version: string | null; 
-      error: string | null;
-      promptOutput?: { 
-        stdout: string; 
-        stderr: string; 
-        exitCode: number;
-        parsedJson?: Record<string, unknown>;
-        sessionId?: string;
-      } | null;
-    };
-    environment: { configured: boolean; error: string | null };
-  };
-};
 
 
 interface CreateSandboxProps {
@@ -41,7 +17,14 @@ interface CreateSandboxProps {
   onStreamingMessages?: (messages: string) => void;
 }
 
-export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStreamingMessages }: CreateSandboxProps) {
+export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStreamingMessages }: CreateSandboxProps = {}) {
+  const router = useRouter();
+  
+  // Use storage hooks
+  const apiKeyStorage = useApiKeys();
+  const sandboxStorage = useSandboxStorage();
+  const sessionStorage = useSessionStorage();
+  
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sandbox, setSandbox] = useState<SandboxInfo | null>(null);
@@ -125,16 +108,15 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
 
   // Load saved API key and tool selection on component mount
   React.useEffect(() => {
-    const savedTool = localStorage.getItem('claude-code-cloud-tool') as AITool;
+    const savedTool = apiKeyStorage.getSelectedTool();
     if (savedTool && ['claude-code', 'cursor-cli'].includes(savedTool)) {
       setSelectedTool(savedTool);
     }
-  }, []);
+  }, [apiKeyStorage]);
 
   // Load saved API key when tool changes
   React.useEffect(() => {
-    const storageKey = `claude-code-cloud-apikey-${selectedTool}`;
-    const savedApiKey = localStorage.getItem(storageKey);
+    const savedApiKey = apiKeyStorage.getApiKey(selectedTool);
     if (savedApiKey) {
       setApiKey(savedApiKey);
     } else {
@@ -142,60 +124,36 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
     }
 
     // Load saved sessions for the current tool
-    const sessionsKey = `claude-code-cloud-sessions-${selectedTool}`;
-    const savedSessionsData = localStorage.getItem(sessionsKey);
-    if (savedSessionsData) {
-      try {
-        const sessions = JSON.parse(savedSessionsData) as SessionInfo[];
-        setSavedSessions(sessions);
-      } catch {
-        setSavedSessions([]);
-      }
-    } else {
-      setSavedSessions([]);
-    }
+    const sessions = sessionStorage.getSessions(selectedTool);
+    setSavedSessions(sessions);
     
     // Reset session selection when tool changes
     setSelectedSessionId("");
     setResumeSession(false);
-  }, [selectedTool]);
+  }, [selectedTool, apiKeyStorage, sessionStorage]);
 
-  // Save API key to localStorage when it changes
+  // Save API key to storage when it changes
   const handleApiKeyChange = (newApiKey: string) => {
     setApiKey(newApiKey);
-    const storageKey = `claude-code-cloud-apikey-${selectedTool}`;
     if (newApiKey.trim()) {
-      localStorage.setItem(storageKey, newApiKey);
+      apiKeyStorage.setApiKey(selectedTool, newApiKey);
     } else {
-      localStorage.removeItem(storageKey);
+      apiKeyStorage.clearApiKey(selectedTool);
     }
   };
 
-  // Save tool selection to localStorage when it changes
+  // Save tool selection to storage when it changes
   const handleToolChange = (newTool: AITool) => {
     setSelectedTool(newTool);
-    localStorage.setItem('claude-code-cloud-tool', newTool);
+    apiKeyStorage.setSelectedTool(newTool);
   };
 
-  // Save session to localStorage
+  // Save session to storage
   const saveSession = (sessionInfo: SessionInfo) => {
-    const sessionsKey = `claude-code-cloud-sessions-${selectedTool}`;
-    const currentSessions = [...savedSessions];
-    
-    // Remove existing session with same ID if it exists
-    const existingIndex = currentSessions.findIndex(s => s.sessionId === sessionInfo.sessionId);
-    if (existingIndex >= 0) {
-      currentSessions[existingIndex] = sessionInfo;
-    } else {
-      currentSessions.push(sessionInfo);
-    }
-    
-    // Keep only the 10 most recent sessions
-    currentSessions.sort((a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime());
-    const limitedSessions = currentSessions.slice(0, 10);
-    
-    setSavedSessions(limitedSessions);
-    localStorage.setItem(sessionsKey, JSON.stringify(limitedSessions));
+    sessionStorage.saveSession(sessionInfo);
+    // Update local state
+    const updatedSessions = sessionStorage.getSessions(selectedTool);
+    setSavedSessions(updatedSessions);
   };
 
   // Helper function to format output (JSON if possible, otherwise plain text)
@@ -282,8 +240,24 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
     setErrorMessage(null);
     setSandbox(null);
     setStreamingMessages("");
-    setShowStreamingOutput(true);
     onStreamingMessages?.("");
+
+    // Store creation state in storage for the chat page
+    const creationState = {
+      apiKey: apiKey.trim(),
+      tool: selectedTool,
+      toolName: currentToolConfig.displayName,
+      prompt: customPrompt,
+      resumeSession,
+      sessionId: selectedSessionId,
+      aliveTimeMinutes,
+      createdAt: new Date().toISOString(),
+    };
+    sandboxStorage.setCreationState(creationState);
+
+    // Navigate immediately to chat page with temporary ID
+    const tempId = `creating-${Date.now()}`;
+    router.push(`/chat/${tempId}`);
 
     // Notify parent that sandbox creation has started
     if (onSandboxCreateStart) {
@@ -371,6 +345,13 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
         // Notify parent component about successful creation
         if (onSandboxCreated) {
           onSandboxCreated(sandboxData, apiKey.trim());
+        }
+
+        // Update the URL to the actual sandbox ID and store the sandbox data
+        if (sandboxData.id) {
+          sandboxStorage.setSandbox(sandboxData);
+          sandboxStorage.clearCreationState();
+          router.replace(`/chat/${sandboxData.id}`);
         }
       }
     } catch (error: unknown) {
@@ -526,7 +507,7 @@ export function CreateSandbox({ onSandboxCreated, onSandboxCreateStart, onStream
             {isLoading ? (
               resumeSession ? `Resuming ${currentToolConfig.displayName} Session...` : `Creating ${currentToolConfig.displayName} Sandbox...`
             ) : (
-              resumeSession ? `Resume ${currentToolConfig.displayName} Session` : `Create ${currentToolConfig.displayName} Sandbox`
+              resumeSession ? `Resume ${currentToolConfig.displayName} Session` : `Start chatting with ${currentToolConfig.displayName}`
             )}
           </button>
           {(sandbox || errorMessage) && (
